@@ -1,5 +1,5 @@
 // src/services/tavily.js
-import { tavily } from "@tavily/core";
+import { tavily } from "tavily";
 
 const client = tavily({
   apiKey: process.env.TAVILY_API_KEY,

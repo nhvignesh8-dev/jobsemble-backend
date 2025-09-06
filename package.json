@@ -1,0 +1,23 @@
+{
+  "name": "jobsemble-scraper-backend",
+  "version": "1.0.0",
+  "description": "Multi-cloud job scraping backend for Jobsemble",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node server.js"
+  },
+  "dependencies": {
+    "express": "^4.18.2",
+    "cors": "^2.8.5",
+    "puppeteer": "^21.5.0",
+    "@tavily/core": "^1.0.0",
+    "dotenv": "^16.3.1"
+  },
+  "engines": {
+    "node": "18.x"
+  },
+  "keywords": ["job-scraping", "puppeteer", "tavily", "multi-cloud"],
+  "author": "Jobsemble",
+  "license": "MIT"
+}

@@ -1,9 +1,33 @@
 // src/services/tavily.js
-import { tavily } from "@tavily/core";
+import axios from 'axios';
 
-const client = tavily({
-  apiKey: process.env.TAVILY_API_KEY,
-});
+const TAVILY_API_URL = 'https://api.tavily.com/search';
+
+// Simple Tavily client implementation
+const client = {
+  search: async (query, options = {}) => {
+    try {
+      const response = await axios.post(TAVILY_API_URL, {
+        api_key: process.env.TAVILY_API_KEY,
+        query: query,
+        max_results: options.maxResults || 10,
+        search_depth: options.searchDepth || 'basic',
+        include_answer: options.includeAnswer || false,
+        include_raw_content: options.includeRawContent || false
+      }, {
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        timeout: 30000
+      });
+      
+      return response.data;
+    } catch (error) {
+      console.error('Tavily API Error:', error.message);
+      throw new Error(`Tavily search failed: ${error.message}`);
+    }
+  }
+};
 
 /**
  * Search for job listings using Tavily

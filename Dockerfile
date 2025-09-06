@@ -1,5 +1,5 @@
-# Use Node.js 18 LTS Alpine for smaller image size
-FROM node:18-alpine
+# Use Node.js 20 LTS Alpine for better compatibility
+FROM node:20-alpine
 
 # Set working directory
 WORKDIR /app
@@ -55,3 +55,4 @@ HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
 
 # Start the application
 CMD ["node", "server.js"]
+

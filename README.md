@@ -128,3 +128,4 @@ Expected load distribution:
 - Oracle ARM: 10-20% (Tertiary)
 
 Total capacity: 16-22 concurrent searches
+

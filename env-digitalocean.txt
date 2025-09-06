@@ -4,3 +4,4 @@ SEARCH_BACKEND=tavily
 TAVILY_API_KEY=your_tavily_api_key_here
 PORT=8080
 NODE_ENV=production
+

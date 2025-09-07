@@ -2,10 +2,10 @@ import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
 import puppeteer from 'puppeteer';
-import { searchJobListings } from './src/tavily.js';
+import { searchJobListings } from './src/services/tavily.js';
 
 const app = express();
-const PORT = process.env.PORT || 3001;
+const PORT = 3001;
 
 // Environment Configuration
 const SEARCH_BACKEND = process.env.SEARCH_BACKEND || 'tavily';
@@ -570,17 +570,31 @@ async function scrapeViaGoogleSearch(boardId, jobTitle, location, retryCount = 0
         // Debug: Log what we find on the page
         console.log('🔍 Starting search results extraction...');
         
-        // Multiple Google search result selectors to try
+        // Get the domain for the specific job board based on search query
+        let boardDomain = '';
+        if (window.location.href.includes('greenhouse.io')) boardDomain = 'greenhouse.io';
+        else if (window.location.href.includes('lever.co')) boardDomain = 'lever.co';
+        else if (window.location.href.includes('ashbyhq.com')) boardDomain = 'ashbyhq.com';
+        else if (window.location.href.includes('site:')) {
+          const siteMatch = window.location.href.match(/site%3A([^&%]+)/);
+          if (siteMatch) boardDomain = siteMatch[1];
+        }
+        console.log('🎯 Targeting domain:', boardDomain);
+        
+        // Multiple Google search result selectors to try (more specific to avoid navigation links)
         const selectorStrategies = [
-          // Modern Google selectors
-          '.g .yuRUbf a',
-          '.g a[href^="http"]',
-          '[data-sokoban-container] a[href]',
-          // Fallback selectors
-          '#search .g a',
-          '#rso .g a',
-          '.srg .g a'
-        ];
+          // Target specific job board domain first (if we found one)
+          boardDomain ? '.g .yuRUbf a[href*="' + boardDomain + '"]' : null,
+          boardDomain ? '.g a[href*="' + boardDomain + '"]' : null,
+          boardDomain ? '#search .g a[href*="' + boardDomain + '"]' : null,
+          // Target actual search results containers and exclude navigation
+          '#search .g .yuRUbf a[href^="http"]',
+          '#rso .g .yuRUbf a[href^="http"]',
+          '.srg .g .yuRUbf a[href^="http"]',
+          // Fallback but filter by content
+          '.g a[href*="jobs"][href^="http"]',
+          '.g a[href*="career"][href^="http"]'
+        ].filter(Boolean);
         
         let foundResults = false;
         
@@ -597,6 +611,14 @@ async function scrapeViaGoogleSearch(boardId, jobTitle, location, retryCount = 0
             for (const linkElement of linkElements) {
               if (!linkElement.href || !linkElement.href.startsWith('http')) continue;
               
+              // Skip Google's internal navigation links
+              if (linkElement.href.includes('google.com/search') || 
+                  linkElement.href.includes('accounts.google.com') ||
+                  linkElement.href.includes('support.google.com') ||
+                  linkElement.href.includes('policies.google.com')) {
+                continue;
+              }
+              
               // Find the title (h3 element)
               let titleElement = linkElement.querySelector('h3');
               if (!titleElement) {
@@ -607,13 +629,26 @@ async function scrapeViaGoogleSearch(boardId, jobTitle, location, retryCount = 0
               }
               
               if (titleElement && titleElement.textContent.trim()) {
+                const title = titleElement.textContent.trim();
+                
+                // Skip Google navigation elements
+                const navigationTexts = ['Sign in', 'AI Mode', 'Images', 'Videos', 'Shopping', 'Forums', 
+                                        'Any time', 'Past hour', 'Past 24 hours', 'Past week', 'Past month', 
+                                        'Past year', 'All results', 'Verbatim', 'Send feedback', 'Previous',
+                                        'Next', 'Reset search tools', 'Short videos'];
+                                        
+                if (navigationTexts.includes(title) || title.includes('From your IP address')) {
+                  console.log(`🔍 Skipping navigation element: "${title}"`);
+                  continue;
+                }
+                
                 results.push({
-                  title: titleElement.textContent.trim(),
+                  title: title,
                   url: linkElement.href,
                   snippet: ''
                 });
                 foundResults = true;
-                console.log(`✅ Found result: ${titleElement.textContent.trim()}`);
+                console.log(`✅ Found result: ${title}`);
               }
             }
           } catch (e) {
@@ -763,8 +798,9 @@ function isJobTitleRelevant(resultTitle, searchJobTitle) {
   
   const relevanceScore = matchingWords.length / searchWords.length;
   
-  // Require at least 60% word match for relevance
-  return relevanceScore >= 0.6;
+  // Require at least 30% word match for relevance (temporarily relaxed for debugging)
+  console.log(`🔍 Title relevance: "${resultTitle}" vs "${searchJobTitle}" = ${relevanceScore} (${matchingWords.length}/${searchWords.length})`);
+  return relevanceScore >= 0.3;
 }
 
 // Result Aggregation and Deduplication
@@ -826,14 +862,17 @@ function cleanJobTitle(title) {
 
   // Return null for generic titles (will be filtered out later)
   if (genericTitles.some(generic => cleanedTitle.toLowerCase().includes(generic))) {
+    console.log(`🔍 Filtered out generic title: "${title}" -> "${cleanedTitle}" (contains: ${genericTitles.find(g => cleanedTitle.toLowerCase().includes(g))})`);
     return null;
   }
   
   // Filter out very short titles (likely junk)
   if (cleanedTitle.length <= 2) {
+    console.log(`🔍 Filtered out short title: "${title}" -> "${cleanedTitle}" (length: ${cleanedTitle.length})`);
     return null;
   }
   
+  console.log(`✅ Clean title: "${title}" -> "${cleanedTitle}"`);
   return cleanedTitle;
 }
 

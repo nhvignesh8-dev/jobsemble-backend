@@ -32,7 +32,7 @@ az container create \
     PORT=3001 \
     NODE_ENV=production \
   --secure-environment-variables \
-    TAVILY_API_KEY=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 \
+    TAVILY_API_KEY=${TAVILY_API_KEY} \
   --command-line "/bin/bash -c 'apt-get update && apt-get install -y git curl && curl -fsSL https://deb.nodesource.com/setup_20.x | bash - && apt-get install -y nodejs && mkdir -p /app && cd /app && git clone https://github.com/nhvignesh8-dev/jobsemble-backend.git . && npm install --production && exec node server.js'"
 ```
 
@@ -47,7 +47,7 @@ gcloud services enable run.googleapis.com
 gcloud services enable secretmanager.googleapis.com
 
 # 2. Create secret for Tavily API key
-echo "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" | gcloud secrets create tavily-api-key --data-file=-
+echo "${TAVILY_API_KEY}" | gcloud secrets create tavily-api-key --data-file=-
 
 # 3. Deploy using Cloud Build
 gcloud builds submit --config cloudbuild.yaml

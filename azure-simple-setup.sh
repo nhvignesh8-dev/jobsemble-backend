@@ -1,32 +1,31 @@
 #!/bin/bash
-# Azure Container Startup Script
+set -e
 
-echo "🚀 Starting Azure Container Setup..."
+echo "🚀 Azure Container Setup Started..."
 
-# Install required packages
+# Update and install basic tools
 apt-get update -y
 apt-get install -y curl git
 
-# Install Node.js 20
+# Install Node.js 20 LTS
 curl -fsSL https://deb.nodesource.com/setup_20.x | bash -
 apt-get install -y nodejs
 
-# Verify Node.js installation
-echo "Node.js version: $(node --version)"
-echo "NPM version: $(npm --version)"
+echo "✅ Node.js $(node --version) installed"
+echo "✅ NPM $(npm --version) installed"
 
 # Create app directory
 mkdir -p /app
 cd /app
 
-# Clone the repository
+# Clone repository
 echo "📥 Cloning repository..."
 git clone https://github.com/nhvignesh8-dev/jobsemble-backend.git .
 
 # Create environment file
-echo "🔧 Setting up environment..."
-cat > .env << EOF
-CLOUD_PROVIDER=AZURE-CONTAINER
+echo "🔧 Creating environment..."
+cat > .env << 'EOF'
+CLOUD_PROVIDER=AZURE-CONTAINER-FIXED
 SEARCH_BACKEND=tavily
 TAVILY_API_KEY=${TAVILY_API_KEY:-"your_tavily_api_key_here"}
 PORT=3001
@@ -37,6 +36,5 @@ EOF
 echo "📦 Installing dependencies..."
 npm install --production
 
-# Start the application
-echo "🌟 Starting job scraper server..."
+echo "🌟 Starting server..."
 exec node server.js

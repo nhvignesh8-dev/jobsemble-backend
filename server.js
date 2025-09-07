@@ -76,7 +76,7 @@ async function scrapeMultipleJobBoards(jobTitle, selectedBoards, location = 'Uni
         
         let result;
         if (searchEngine === 'tavily') {
-          result = await scrapeViaSearch(board, jobTitle, location, retryCount, timeFilter);
+          result = await scrapeViaSearch(board, jobTitle, location, retryCount, timeFilter, effectiveTavilyKey);
         } else if (searchEngine === 'google') {
           result = await scrapeViaGoogleSearch(board, jobTitle, location, retryCount, timeFilter);
         } else {
@@ -110,7 +110,7 @@ async function scrapeMultipleJobBoards(jobTitle, selectedBoards, location = 'Uni
 }
 
 // Search via Tavily API
-async function scrapeViaSearch(boardId, jobTitle, location = 'United States', retryCount = 0, timeFilter = 'qdr:d') {
+async function scrapeViaSearch(boardId, jobTitle, location = 'United States', retryCount = 0, timeFilter = 'qdr:d', tavilyApiKey = null) {
   const config = JOB_BOARD_CONFIGS[boardId];
   if (!config) {
     throw new Error(`Unknown job board: ${boardId}`);
@@ -118,8 +118,9 @@ async function scrapeViaSearch(boardId, jobTitle, location = 'United States', re
 
   try {
     console.log(`🔍 [${CLOUD_PROVIDER}] Using Tavily API for ${config.name}`);
+    console.log(`🔑 [${CLOUD_PROVIDER}] Using API key: ${tavilyApiKey ? 'User-provided' : 'System'}`);
     
-    const jobs = await searchJobListings(jobTitle, [boardId], location, timeFilter);
+    const jobs = await searchJobListings(jobTitle, [boardId], location, timeFilter, tavilyApiKey);
     
     return jobs
       .map(result => ({
@@ -338,7 +339,15 @@ function formatDatePosted(dateString) {
 app.post('/api/scrape-jobs', async (req, res) => {
   try {
     console.log(`📨 [${CLOUD_PROVIDER}] Raw request body:`, JSON.stringify(req.body, null, 2));
-    const { jobTitle, jobBoards = ['greenhouse'], location = 'United States', timeFilter = 'qdr:d', searchEngine = 'tavily' } = req.body;
+    const { 
+      jobTitle, 
+      jobBoards = ['greenhouse'], 
+      location = 'United States', 
+      timeFilter = 'qdr:d', 
+      searchEngine = 'tavily',
+      userApiKey = null,  // User's specific API key
+      isUserKey = false   // Whether using user's key or system key
+    } = req.body;
     
     if (!jobTitle) {
       return res.status(400).json({ 
@@ -348,13 +357,27 @@ app.post('/api/scrape-jobs', async (req, res) => {
       });
     }
     
-    // Check if Tavily is configured when using Tavily
-    if (searchEngine === 'tavily' && !TAVILY_API_KEY) {
-      return res.status(500).json({
-        success: false,
-        error: 'Tavily API key not configured. Please set TAVILY_API_KEY environment variable.',
-        cloudProvider: CLOUD_PROVIDER
-      });
+    // Determine which Tavily API key to use
+    let effectiveTavilyKey = null;
+    
+    if (searchEngine === 'tavily') {
+      if (isUserKey && userApiKey) {
+        // Use user's API key
+        effectiveTavilyKey = userApiKey;
+        console.log(`🔑 [${CLOUD_PROVIDER}] Using user-provided Tavily API key`);
+      } else if (!isUserKey && TAVILY_API_KEY) {
+        // Use system key only for free searches
+        effectiveTavilyKey = TAVILY_API_KEY;
+        console.log(`🔑 [${CLOUD_PROVIDER}] Using system Tavily API key (free search)`);
+      } else {
+        // User has no key and no free searches left
+        return res.status(403).json({
+          success: false,
+          error: 'Usage exceeded. Please provide your Tavily API key to continue using this feature.',
+          code: 'API_KEY_REQUIRED',
+          cloudProvider: CLOUD_PROVIDER
+        });
+      }
     }
     
     console.log(`📥 [${CLOUD_PROVIDER}] Received multi-platform search request:`, jobTitle);

@@ -4,11 +4,11 @@ import axios from 'axios';
 const TAVILY_API_URL = 'https://api.tavily.com/search';
 
 // Simple Tavily client implementation
-const client = {
+const createClient = (apiKey) => ({
   search: async (query, options = {}) => {
     try {
       const response = await axios.post(TAVILY_API_URL, {
-        api_key: process.env.TAVILY_API_KEY,
+        api_key: apiKey,
         query: query,
         max_results: options.maxResults || 10,
         search_depth: options.searchDepth || 'basic',
@@ -27,7 +27,7 @@ const client = {
       throw new Error(`Tavily search failed: ${error.message}`);
     }
   }
-};
+});
 
 /**
  * Search for job listings using Tavily
@@ -35,14 +35,23 @@ const client = {
  * @param {string} location - The location to search in
  * @param {Array<string>} jobBoards - Array of job board names to search
  * @param {string} timeFilter - Time filter (e.g., 'qdr:d' for past day)
+ * @param {string} dynamicApiKey - Optional user-specific API key
  * @returns {Promise<Array>} Array of job results
  */
-export async function searchJobListings(jobTitle, location, jobBoards, timeFilter) {
+export async function searchJobListings(jobTitle, location, jobBoards, timeFilter, dynamicApiKey = null) {
   console.log('🔍 Tavily Job Search:', { jobTitle, location, jobBoards, timeFilter });
   
-  if (!process.env.TAVILY_API_KEY) {
-    throw new Error('TAVILY_API_KEY environment variable is not set');
+  // Use dynamic API key if provided, otherwise fall back to environment variable
+  const apiKey = dynamicApiKey || process.env.TAVILY_API_KEY;
+  
+  if (!apiKey) {
+    throw new Error('Tavily API key is required. Please provide an API key or set TAVILY_API_KEY environment variable.');
   }
+  
+  console.log(`🔑 Using ${dynamicApiKey ? 'user-provided' : 'system'} Tavily API key`);
+  
+  // Create Tavily client with the appropriate API key
+  const client = createClient(apiKey);
 
   const allJobs = [];
 

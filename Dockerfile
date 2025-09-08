@@ -10,7 +10,7 @@ COPY package*.json ./
 # Install Node.js dependencies
 # Skip Puppeteer download since it's already included in the image
 ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true
-ENV PUPPETEER_EXECUTABLE_PATH=/usr/bin/google-chrome-stable
+ENV PUPPETEER_EXECUTABLE_PATH=/usr/bin/google-chrome
 RUN npm ci --only=production
 
 # Copy application code

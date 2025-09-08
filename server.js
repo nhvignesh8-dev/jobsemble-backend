@@ -4,6 +4,35 @@ import cors from 'cors';
 import puppeteer from 'puppeteer';
 import { searchJobListings } from './src/tavily.js';
 
+// Install Chrome browser if not present (for cloud deployment)
+async function ensureChromeInstalled() {
+  try {
+    const executablePath = puppeteer.executablePath();
+    console.log('🔍 Chrome path:', executablePath);
+  } catch (error) {
+    console.log('⚠️ Chrome not found, attempting to install...');
+    try {
+      const { spawn } = await import('child_process');
+      await new Promise((resolve, reject) => {
+        const install = spawn('npx', ['puppeteer', 'browsers', 'install', 'chrome'], {
+          stdio: 'inherit'
+        });
+        install.on('close', (code) => {
+          if (code === 0) {
+            console.log('✅ Chrome installed successfully');
+            resolve(code);
+          } else {
+            console.log('❌ Chrome installation failed with code:', code);
+            reject(new Error(`Chrome installation failed with code ${code}`));
+          }
+        });
+      });
+    } catch (installError) {
+      console.log('❌ Could not install Chrome:', installError.message);
+    }
+  }
+}
+
 const app = express();
 const PORT = process.env.PORT || 3001;
 
@@ -241,9 +270,10 @@ async function scrapeViaGoogleSearch(boardId, jobTitle, location, retryCount = 0
     ];
     const randomUserAgent = userAgents[Math.floor(Math.random() * userAgents.length)];
 
-    // Launch browser with maximum stealth
+    // Launch browser with maximum stealth and cloud compatibility
     let browser = await puppeteer.launch({
       headless: "new", // Use new headless mode
+      executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || undefined,
       args: [
         '--no-sandbox',
         '--disable-setuid-sandbox',
@@ -1252,20 +1282,31 @@ app.get('/api/test-tavily', async (req, res) => {
   }
 });
 
-// Start server
-app.listen(PORT, () => {
-  console.log('🚀 Job Scraping Server running on http://localhost:' + PORT);
-  console.log('📋 Health check: http://localhost:' + PORT + '/api/health');
-  console.log('🔍 Scrape jobs: POST http://localhost:' + PORT + '/api/scrape-jobs');
-  console.log('🧪 Test Tavily: GET http://localhost:' + PORT + '/api/test-tavily');
+// Initialize Chrome and start server
+async function startServer() {
+  // Ensure Chrome is installed for Puppeteer
+  await ensureChromeInstalled();
   
-  if (SEARCH_BACKEND === 'tavily') {
-    if (TAVILY_API_KEY) {
-      console.log('✅ Tavily API configured and ready');
-    } else {
-      console.log('⚠️ WARNING: TAVILY_API_KEY not set! Please configure your API key.');
-      console.log('📝 Get your API key from: https://app.tavily.com');
+  // Start server
+  app.listen(PORT, () => {
+    console.log('🚀 Job Scraping Server running on http://localhost:' + PORT);
+    console.log('📋 Health check: http://localhost:' + PORT + '/api/health');
+    console.log('🔍 Scrape jobs: POST http://localhost:' + PORT + '/api/scrape-jobs');
+    console.log('🧪 Test Tavily: GET http://localhost:' + PORT + '/api/test-tavily');
+    
+    if (SEARCH_BACKEND === 'tavily') {
+      if (TAVILY_API_KEY) {
+        console.log('✅ Tavily API configured and ready');
+      } else {
+        console.log('⚠️ WARNING: TAVILY_API_KEY not set! Please configure your API key.');
+        console.log('📝 Get your API key from: https://app.tavily.com');
+      }
     }
-  }
+  });
+}
+
+// Start the server
+startServer().catch(error => {
+  console.error('❌ Failed to start server:', error);
+  process.exit(1);
 });
-// Force deployment trigger - Sun Sep  7 20:24:56 EDT 2025

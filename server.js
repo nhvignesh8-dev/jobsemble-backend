@@ -2,10 +2,10 @@ import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
 import puppeteer from 'puppeteer';
-import { searchJobListings } from './src/services/tavily.js';
+import { searchJobListings } from './src/tavily.js';
 
 const app = express();
-const PORT = 3001;
+const PORT = process.env.PORT || 3001;
 
 // Environment Configuration
 const SEARCH_BACKEND = process.env.SEARCH_BACKEND || 'tavily';

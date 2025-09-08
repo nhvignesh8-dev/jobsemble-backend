@@ -5,7 +5,7 @@
   "main": "server.js",
   "type": "module",
   "scripts": {
-    "start": "npx puppeteer browsers install chrome --path /workspace/.cache/puppeteer && node server.js",
+    "start": "bash startup.sh",
     "dev": "node server.js",
     "postinstall": "npx puppeteer browsers install chrome"
   },

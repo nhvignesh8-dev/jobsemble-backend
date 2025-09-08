@@ -836,7 +836,7 @@ function aggregateAndDeduplicateResults(allResults) {
 function cleanJobTitle(title) {
   if (!title) return 'Unknown Position';
   
-  // Filter out generic/junk titles
+  // Filter out generic/junk titles (exact matches only, not partial)
   const genericTitles = [
     'open positions',
     'current openings', 
@@ -844,9 +844,13 @@ function cleanJobTitle(title) {
     'view all jobs',
     'see all positions',
     'job opportunities',
-    'careers',
+    'careers'
+  ];
+  
+  // Exact matches for job board names (not partial matches)
+  const exactGenericTitles = [
     'greenhouse',
-    'lever',
+    'lever', 
     'ashby',
     'workable'
   ];
@@ -863,6 +867,12 @@ function cleanJobTitle(title) {
   // Return null for generic titles (will be filtered out later)
   if (genericTitles.some(generic => cleanedTitle.toLowerCase().includes(generic))) {
     console.log(`🔍 Filtered out generic title: "${title}" -> "${cleanedTitle}" (contains: ${genericTitles.find(g => cleanedTitle.toLowerCase().includes(g))})`);
+    return null;
+  }
+  
+  // Return null for exact matches of job board names only
+  if (exactGenericTitles.some(exact => cleanedTitle.toLowerCase() === exact)) {
+    console.log(`🔍 Filtered out exact generic title: "${title}" -> "${cleanedTitle}" (exact match: ${exactGenericTitles.find(g => cleanedTitle.toLowerCase() === g)})`);
     return null;
   }
   

@@ -886,6 +886,16 @@ function cleanJobTitle(title) {
     .replace(/\s*at\s+.+$/, '')
     .replace(/,\s*(New Graduate|Entry Level|Senior|Junior).*$/i, '')
     .replace(/\s*\([^)]*\)\s*$/g, '') // Remove location text in parentheses at the end
+    // Clean up URLs and site names that get concatenated
+    .replace(/greenhouse\.io.*$/i, '')
+    .replace(/lever\.co.*$/i, '')
+    .replace(/ashby\.com.*$/i, '')
+    .replace(/workable\.com.*$/i, '')
+    .replace(/https?:\/\/.*$/i, '')
+    .replace(/boards\..*$/i, '')
+    .replace(/jobs\..*$/i, '')
+    .replace(/\s*›\s*.*$/i, '')
+    .replace(/\s*-\s*.*\.(io|com|co).*$/i, '')
     .trim();
 
   // Return null for generic titles (will be filtered out later)

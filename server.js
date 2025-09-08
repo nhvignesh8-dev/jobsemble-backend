@@ -277,6 +277,10 @@ async function scrapeViaGoogleSearch(boardId, jobTitle, location, retryCount = 0
         '--disable-sync',
         '--disable-translate',
         '--disable-background-timer-throttling',
+        '--no-zygote', // Disable zygote process
+        '--disable-ipc-flooding-protection',
+        '--force-color-profile=srgb',
+        '--disable-background-networking',
         '--disable-backgrounding-occluded-windows',
         '--disable-renderer-backgrounding',
         '--disable-ipc-flooding-protection',

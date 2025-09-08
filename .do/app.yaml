@@ -1,0 +1,20 @@
+name: jobsemble-backend
+services:
+- name: web
+  source_dir: /
+  github:
+    repo: nhvignesh8-dev/jobsemble-backend
+    branch: main
+  dockerfile_path: Dockerfile
+  http_port: 3001
+  instance_count: 1
+  instance_size_slug: basic-xxs
+  routes:
+  - path: /
+  health_check:
+    http_path: /api/health
+  env:
+  - key: NODE_ENV
+    value: production
+  - key: PORT
+    value: "3001"

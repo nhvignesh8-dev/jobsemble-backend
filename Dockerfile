@@ -12,7 +12,7 @@ COPY package*.json ./
 ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true
 # Let Puppeteer auto-detect Chrome in the Docker image
 # ENV PUPPETEER_EXECUTABLE_PATH=/usr/bin/google-chrome
-RUN npm ci --only=production
+RUN npm install --only=production
 
 # Copy application code
 COPY . .

@@ -22,7 +22,9 @@ app.use(cors({
     'http://localhost:8080',
     'http://localhost:5173',
     'http://localhost:3000',
-    'https://job-scout-automaton.vercel.app'
+    'https://job-scout-automaton.vercel.app',
+    'https://jobsemble.tech',
+    'https://job-scout-automaton.lovable.app'
   ],
   credentials: true
 }));

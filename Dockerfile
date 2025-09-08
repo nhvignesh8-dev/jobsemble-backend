@@ -4,6 +4,11 @@ FROM ghcr.io/puppeteer/puppeteer:21.5.2
 # Set working directory
 WORKDIR /workspace
 
+# Change ownership of workspace to pptruser
+USER root
+RUN chown -R pptruser:pptruser /workspace
+USER pptruser
+
 # Copy package files first for better caching
 COPY package*.json ./
 

@@ -255,7 +255,8 @@ async function scrapeViaGoogleSearch(boardId, jobTitle, location, retryCount = 0
     // Launch browser with maximum stealth and cloud compatibility
     let browser = await puppeteer.launch({
       headless: "new", // Use new headless mode
-      executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || '/usr/bin/google-chrome',
+      // Let Puppeteer find Chrome automatically in Docker
+      executablePath: process.env.PUPPETEER_EXECUTABLE_PATH,
       ignoreDefaultArgs: ['--disable-extensions'],
       args: [
         '--no-sandbox',

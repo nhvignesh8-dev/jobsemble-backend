@@ -4,32 +4,14 @@ import cors from 'cors';
 import puppeteer from 'puppeteer';
 import { searchJobListings } from './src/tavily.js';
 
-// Install Chrome browser if not present (for cloud deployment)
+// Check Chrome installation (using pre-built Docker image)
 async function ensureChromeInstalled() {
   try {
-    const executablePath = puppeteer.executablePath();
+    const executablePath = process.env.PUPPETEER_EXECUTABLE_PATH || '/usr/bin/google-chrome-stable';
     console.log('🔍 Chrome path:', executablePath);
+    console.log('✅ Using pre-installed Chrome from Docker image');
   } catch (error) {
-    console.log('⚠️ Chrome not found, attempting to install...');
-    try {
-      const { spawn } = await import('child_process');
-      await new Promise((resolve, reject) => {
-        const install = spawn('npx', ['puppeteer', 'browsers', 'install', 'chrome'], {
-          stdio: 'inherit'
-        });
-        install.on('close', (code) => {
-          if (code === 0) {
-            console.log('✅ Chrome installed successfully');
-            resolve(code);
-          } else {
-            console.log('❌ Chrome installation failed with code:', code);
-            reject(new Error(`Chrome installation failed with code ${code}`));
-          }
-        });
-      });
-    } catch (installError) {
-      console.log('❌ Could not install Chrome:', installError.message);
-    }
+    console.log('⚠️ Chrome check failed:', error.message);
   }
 }
 
@@ -273,13 +255,20 @@ async function scrapeViaGoogleSearch(boardId, jobTitle, location, retryCount = 0
     // Launch browser with maximum stealth and cloud compatibility
     let browser = await puppeteer.launch({
       headless: "new", // Use new headless mode
-      executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || undefined,
+      executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || '/usr/bin/google-chrome-stable',
+      ignoreDefaultArgs: ['--disable-extensions'],
       args: [
         '--no-sandbox',
         '--disable-setuid-sandbox',
         '--disable-dev-shm-usage',
         '--disable-web-security',
         '--disable-features=VizDisplayCompositor',
+        '--disable-accelerated-2d-canvas',
+        '--disable-gpu',
+        '--disable-background-timer-throttling',
+        '--disable-backgrounding-occluded-windows',
+        '--disable-renderer-backgrounding',
+        '--single-process', // This might help with missing libraries
         '--disable-blink-features=AutomationControlled',
         '--disable-extensions',
         '--no-first-run',

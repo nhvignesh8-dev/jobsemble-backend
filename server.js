@@ -16,7 +16,7 @@ console.log('🔧 Search Configuration:', {
   tavilyConfigured: !!TAVILY_API_KEY
 });
 
-// CORS configuration
+// CORS configuration - Enhanced for production
 app.use(cors({
   origin: [
     'http://localhost:8080',
@@ -26,7 +26,10 @@ app.use(cors({
     'https://jobsemble.tech',
     'https://job-scout-automaton.lovable.app'
   ],
-  credentials: true
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
+  optionsSuccessStatus: 200 // For legacy browser support
 }));
 app.use(express.json());
 

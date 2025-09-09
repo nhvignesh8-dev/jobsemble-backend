@@ -20,23 +20,57 @@ import jwt from 'jsonwebtoken';
 import bcrypt from 'bcryptjs';
 import crypto from 'crypto';
 import axios from 'axios';
-import { Client, Databases, Query } from 'appwrite';
+import { Client, Databases, Query, ID } from 'appwrite';
 
 const app = express();
 const PORT = process.env.PORT || 3001;
 
+// Trust proxy for DigitalOcean App Platform and other cloud providers
+app.set('trust proxy', 1);
+
 // Security Configuration
 const JWT_SECRET = process.env.JWT_SECRET || crypto.randomBytes(64).toString('hex');
-const ENCRYPTION_KEY = process.env.ENCRYPTION_KEY || crypto.randomBytes(32);
+// Use a consistent encryption key to avoid decryption issues
+const ENCRYPTION_KEY = process.env.ENCRYPTION_KEY || Buffer.from('12345678901234567890123456789012', 'utf8');
+
+// System API Keys for freemium users - stored encrypted in database
+// Create a system user profile to store encrypted system API keys
 
 // Appwrite Configuration
 const client = new Client()
   .setEndpoint(process.env.VITE_APPWRITE_ENDPOINT || 'https://nyc.cloud.appwrite.io/v1')
-  .setProject(process.env.VITE_APPWRITE_PROJECT_ID || '675ee8990006eeb37b46');
+  .setProject(process.env.VITE_APPWRITE_PROJECT_ID || '68bb20f90028125703bb');
 
 const databases = new Databases(client);
-const DATABASE_ID = process.env.VITE_APPWRITE_DATABASE_ID || '675ee8dc001f5e56f1c3';
-const COLLECTION_ID = process.env.VITE_APPWRITE_COLLECTION_ID || '675ee9160007b2c86a44';
+const DATABASE_ID = process.env.VITE_APPWRITE_DATABASE_ID || 'job-scout-db';
+const COLLECTION_ID = process.env.VITE_APPWRITE_COLLECTION_ID || 'users';
+
+// Session Management - Track active sessions per user
+const activeSessions = new Map(); // userId -> { sessionId, token, issuedAt, lastActive, userAgent, ip }
+
+// Cleanup old sessions periodically (every 5 minutes)
+setInterval(() => {
+  const now = Date.now();
+  const maxAge = 30 * 60 * 1000; // 30 minutes
+  
+  for (const [userId, session] of activeSessions.entries()) {
+    if (now - session.lastActive > maxAge) {
+      console.log(`🧹 Cleaning up expired session for user ${userId}`);
+      activeSessions.delete(userId);
+    }
+  }
+}, 5 * 60 * 1000);
+
+// Helper function to invalidate a user's session
+function invalidateUserSession(userId, reason = 'New session created') {
+  if (activeSessions.has(userId)) {
+    const oldSession = activeSessions.get(userId);
+    console.log(`🔒 Invalidating session for user ${userId}: ${reason}`);
+    activeSessions.delete(userId);
+    return oldSession;
+  }
+  return null;
+}
 
 // Security Middleware
 app.use(helmet({
@@ -58,11 +92,12 @@ app.use(helmet({
 app.use(cors({
   origin: [
     'http://localhost:8080',
+    'http://localhost:8081',
     'http://localhost:5173',
     'https://jobsemble.tech',
     'https://job-scout-automaton.lovable.app'
   ],
-  methods: ['GET', 'POST'],
+  methods: ['GET', 'POST', 'DELETE'],
   allowedHeaders: ['Content-Type', 'Authorization'],
   credentials: true
 }));
@@ -92,7 +127,7 @@ function encrypt(text) {
   if (!text) return '';
   
   const iv = crypto.randomBytes(16);
-  const cipher = crypto.createCipher('aes-256-cbc', ENCRYPTION_KEY);
+  const cipher = crypto.createCipheriv('aes-256-cbc', ENCRYPTION_KEY, iv);
   let encrypted = cipher.update(text, 'utf8', 'hex');
   encrypted += cipher.final('hex');
   
@@ -104,14 +139,14 @@ function decrypt(encryptedText) {
   
   const [ivHex, encrypted] = encryptedText.split(':');
   const iv = Buffer.from(ivHex, 'hex');
-  const decipher = crypto.createDecipher('aes-256-cbc', ENCRYPTION_KEY);
+  const decipher = crypto.createDecipheriv('aes-256-cbc', ENCRYPTION_KEY, iv);
   let decrypted = decipher.update(encrypted, 'hex', 'utf8');
   decrypted += decipher.final('utf8');
   
   return decrypted;
 }
 
-// Authentication Middleware
+// Authentication Middleware with Session Validation
 async function authenticateToken(req, res, next) {
   const authHeader = req.headers['authorization'];
   const token = authHeader && authHeader.split(' ')[1];
@@ -122,6 +157,35 @@ async function authenticateToken(req, res, next) {
 
   try {
     const decoded = jwt.verify(token, JWT_SECRET);
+    const userId = decoded.userId;
+    
+    // Check if user has an active session
+    const activeSession = activeSessions.get(userId);
+    
+    if (!activeSession) {
+      console.log(`🚫 No active session found for user ${userId}`);
+      return res.status(401).json({ 
+        error: 'Session expired', 
+        code: 'SESSION_EXPIRED',
+        message: 'Please log in again' 
+      });
+    }
+    
+    // Verify the token matches the active session
+    if (activeSession.token !== token) {
+      console.log(`🚫 Token mismatch for user ${userId} - session invalidated from another device`);
+      activeSessions.delete(userId); // Clean up invalid session
+      return res.status(401).json({ 
+        error: 'Session invalidated', 
+        code: 'SESSION_INVALIDATED',
+        message: 'You have been logged out because you signed in from another device' 
+      });
+    }
+    
+    // Update last active time
+    activeSession.lastActive = Date.now();
+    activeSessions.set(userId, activeSession);
+    
     req.user = decoded;
     next();
   } catch (error) {
@@ -156,7 +220,7 @@ app.get('/health', (req, res) => {
   });
 });
 
-// Authentication Endpoint - Issue Short-lived JWT
+// Authentication Endpoint - Issue Short-lived JWT with Single Session Enforcement
 app.post('/auth/token', async (req, res) => {
   try {
     const { appwriteJwt } = req.body;
@@ -169,24 +233,52 @@ app.post('/auth/token', async (req, res) => {
     // In production, you'd verify this with Appwrite
     // For now, we'll create a short-lived token
     
+    const userId = req.body.userId;
+    const userAgent = req.get('User-Agent') || 'Unknown';
+    const clientIp = req.ip || 'Unknown';
+    
+    // Check if user already has an active session and invalidate it
+    const existingSession = invalidateUserSession(userId, 'New login detected');
+    if (existingSession) {
+      console.log(`🔄 User ${userId} logged in from new device/browser - previous session invalidated`);
+    }
+    
     const payload = {
-      userId: req.body.userId,
+      userId: userId,
       email: req.body.email,
       iat: Math.floor(Date.now() / 1000),
       exp: Math.floor(Date.now() / 1000) + (30 * 60) // 30 minutes
     };
 
     const token = jwt.sign(payload, JWT_SECRET);
+    const sessionId = crypto.randomBytes(16).toString('hex');
+    const now = Date.now();
+    
+    // Store the new active session
+    activeSessions.set(userId, {
+      sessionId: sessionId,
+      token: token,
+      issuedAt: now,
+      lastActive: now,
+      userAgent: userAgent,
+      ip: clientIp
+    });
+    
+    console.log(`✅ New session created for user ${userId} from ${clientIp}`);
     
     auditLog('token_issued', payload.userId, {
-      ip: req.ip,
-      userAgent: req.get('User-Agent'),
+      ip: clientIp,
+      userAgent: userAgent,
+      sessionId: sessionId,
+      hadExistingSession: !!existingSession,
       success: true
     });
 
     res.json({ 
       token,
-      expiresIn: 1800 // 30 minutes
+      expiresIn: 1800, // 30 minutes
+      sessionId: sessionId,
+      singleSession: true // Let frontend know single session is enforced
     });
 
   } catch (error) {
@@ -195,10 +287,247 @@ app.post('/auth/token', async (req, res) => {
   }
 });
 
+// Session Management Endpoints
+
+// Logout endpoint - invalidate current session
+app.post('/auth/logout', authenticateToken, (req, res) => {
+  try {
+    const userId = req.user.userId;
+    
+    const removedSession = invalidateUserSession(userId, 'User logout');
+    
+    auditLog('user_logout', userId, {
+      ip: req.ip,
+      userAgent: req.get('User-Agent'),
+      sessionId: removedSession?.sessionId,
+      success: true
+    });
+    
+    console.log(`🚪 User ${userId} logged out successfully`);
+    
+    res.json({ 
+      success: true, 
+      message: 'Logged out successfully' 
+    });
+  } catch (error) {
+    console.error('Logout error:', error);
+    res.status(500).json({ error: 'Logout failed' });
+  }
+});
+
+// Get active session info
+app.get('/auth/session', authenticateToken, (req, res) => {
+  try {
+    const userId = req.user.userId;
+    const session = activeSessions.get(userId);
+    
+    if (!session) {
+      return res.status(404).json({ error: 'No active session found' });
+    }
+    
+    res.json({
+      sessionId: session.sessionId,
+      issuedAt: new Date(session.issuedAt).toISOString(),
+      lastActive: new Date(session.lastActive).toISOString(),
+      userAgent: session.userAgent,
+      ip: session.ip
+    });
+  } catch (error) {
+    console.error('Session info error:', error);
+    res.status(500).json({ error: 'Failed to get session info' });
+  }
+});
+
+// Delete API Key Endpoint
+app.delete('/api/keys/:provider', authenticateToken, async (req, res) => {
+  try {
+    const { provider } = req.params;
+    
+    console.log(`🗑️ API key deletion request for user ${req.user.userId}, provider: ${provider}`);
+    
+    if (!provider || !['tavily', 'serp'].includes(provider)) {
+      return res.status(400).json({ error: 'Valid provider required' });
+    }
+
+    // Find the user's profile document
+    const userDocs = await databases.listDocuments(
+      DATABASE_ID,
+      COLLECTION_ID,
+      [Query.equal('accountId', req.user.userId)]
+    );
+
+    if (userDocs.documents.length === 0) {
+      return res.status(404).json({ error: 'User profile not found' });
+    }
+
+    const userProfile = userDocs.documents[0];
+    let apiKeys = {};
+    
+    try {
+      apiKeys = JSON.parse(userProfile.apiKeys || '{}');
+    } catch (e) {
+      apiKeys = {};
+    }
+
+    // Remove the API key and related data
+    if (provider === 'serp') {
+      delete apiKeys.serpApiKey;
+      delete apiKeys.serpUsageTracking;
+      console.log(`🗑️ Deleted SERP API key and usage tracking for user ${req.user.userId}`);
+    } else if (provider === 'tavily') {
+      delete apiKeys.tavilyApiKey;
+      delete apiKeys.tavilyUsageCount;
+      console.log(`🗑️ Deleted Tavily API key and usage count for user ${req.user.userId}`);
+    }
+
+    // Update the user profile
+    await databases.updateDocument(
+      DATABASE_ID,
+      COLLECTION_ID,
+      userProfile.$id,
+      {
+        apiKeys: JSON.stringify(apiKeys)
+      }
+    );
+
+    console.log(`✅ ${provider} API key successfully deleted for user ${req.user.userId}`);
+    
+    res.json({ 
+      success: true, 
+      message: `${provider.toUpperCase()} API key deleted successfully`,
+      provider 
+    });
+
+  } catch (error) {
+    console.error('🚨 Key deletion error:', {
+      provider,
+      userId: req.user.userId,
+      error: error.message,
+      stack: error.stack
+    });
+    res.status(500).json({ error: 'Failed to delete API key', details: error.message });
+  }
+});
+
+// System API key now properly encrypted with consistent encryption key
+// Decryption issues resolved - temporary restore endpoint removed
+
+// Store Google Sheet URL Endpoint
+app.post('/api/user/google-sheet-url', authenticateToken, async (req, res) => {
+  try {
+    const { sheetUrl } = req.body;
+    
+    console.log(`📊 Google Sheet URL update request for user ${req.user.userId}`);
+    
+    if (!sheetUrl || typeof sheetUrl !== 'string') {
+      return res.status(400).json({ error: 'Google Sheet URL required' });
+    }
+    
+    // Find the user's profile document
+    const userDocs = await databases.listDocuments(
+      DATABASE_ID,
+      COLLECTION_ID,
+      [Query.equal('accountId', req.user.userId)]
+    );
+
+    if (userDocs.documents.length === 0) {
+      console.log(`❌ User profile not found for ${req.user.userId}`);
+      return res.status(404).json({ error: 'User profile not found' });
+    }
+
+    const userDoc = userDocs.documents[0];
+    console.log(`✅ Found user document for ${req.user.userId}: ${userDoc.$id}`);
+    
+    // Parse existing preferences or create new
+    let preferences = {};
+    try {
+      preferences = userDoc.preferences ? JSON.parse(userDoc.preferences) : {};
+    } catch (e) {
+      console.log(`🔄 Creating new preferences object for user ${req.user.userId}`);
+      preferences = {};
+    }
+    
+    // Update Google Sheet URL
+    preferences.googleSheetUrl = sheetUrl.trim();
+    
+    // Update the user document
+    await databases.updateDocument(
+      DATABASE_ID,
+      COLLECTION_ID,
+      userDoc.$id,
+      {
+        preferences: JSON.stringify(preferences)
+      }
+    );
+
+    console.log(`✅ Google Sheet URL stored for user ${req.user.userId}`);
+    
+    auditLog('google_sheet_url_stored', req.user.userId, {
+      ip: req.ip,
+      userAgent: req.get('User-Agent'),
+      success: true
+    });
+
+    res.json({ 
+      success: true,
+      message: 'Google Sheet URL stored successfully'
+    });
+
+  } catch (error) {
+    console.error('Google Sheet URL storage error:', error);
+    res.status(500).json({ error: 'Failed to store Google Sheet URL' });
+  }
+});
+
+// Get Google Sheet URL Endpoint
+app.get('/api/user/google-sheet-url', authenticateToken, async (req, res) => {
+  try {
+    console.log(`📊 Google Sheet URL retrieval request for user ${req.user.userId}`);
+    
+    // Find the user's profile document
+    const userDocs = await databases.listDocuments(
+      DATABASE_ID,
+      COLLECTION_ID,
+      [Query.equal('accountId', req.user.userId)]
+    );
+
+    if (userDocs.documents.length === 0) {
+      console.log(`❌ User profile not found for ${req.user.userId}`);
+      return res.status(404).json({ error: 'User profile not found' });
+    }
+
+    const userDoc = userDocs.documents[0];
+    
+    // Parse preferences
+    let preferences = {};
+    try {
+      preferences = userDoc.preferences ? JSON.parse(userDoc.preferences) : {};
+    } catch (e) {
+      console.log(`⚠️ Failed to parse preferences for user ${req.user.userId}`);
+      preferences = {};
+    }
+    
+    const googleSheetUrl = preferences.googleSheetUrl || '';
+    
+    console.log(`✅ Google Sheet URL retrieved for user ${req.user.userId}: ${googleSheetUrl ? 'URL found' : 'No URL stored'}`);
+
+    res.json({ 
+      success: true,
+      googleSheetUrl: googleSheetUrl
+    });
+
+  } catch (error) {
+    console.error('Google Sheet URL retrieval error:', error);
+    res.status(500).json({ error: 'Failed to retrieve Google Sheet URL' });
+  }
+});
+
 // Store API Key Endpoint
 app.post('/api/keys/store', authenticateToken, async (req, res) => {
   try {
     const { apiKey, provider, label } = req.body;
+    
+    console.log(`🔑 API key storage request for user ${req.user.userId}, provider: ${provider}`);
     
     if (!apiKey || !provider) {
       return res.status(400).json({ error: 'API key and provider required' });
@@ -211,19 +540,76 @@ app.post('/api/keys/store', authenticateToken, async (req, res) => {
 
     // Encrypt the API key
     const encryptedKey = encrypt(apiKey);
+    console.log(`🔒 API key encrypted for ${provider}`);
     
-    // Store in Appwrite (encrypted)
-    const keyData = {
-      userId: req.user.userId,
-      provider,
-      encryptedKey,
-      label: label || `${provider} API Key`,
-      createdAt: new Date().toISOString(),
-      lastUsed: null
-    };
+    // Find the user's profile document
+    const userDocs = await databases.listDocuments(
+      DATABASE_ID,
+      COLLECTION_ID,
+      [Query.equal('accountId', req.user.userId)]
+    );
 
-    // Save to database (implementation depends on your schema)
-    // This is a simplified example
+    if (userDocs.documents.length === 0) {
+      console.log(`❌ User profile not found for ${req.user.userId}`);
+      return res.status(404).json({ error: 'User profile not found' });
+    }
+
+    const userDoc = userDocs.documents[0];
+    console.log(`✅ Found user document for ${req.user.userId}: ${userDoc.$id}`);
+    
+    // Get existing API keys or create empty object
+    let apiKeys = {};
+    try {
+      apiKeys = userDoc.apiKeys ? JSON.parse(userDoc.apiKeys) : {};
+      console.log(`📋 Existing API keys for ${req.user.userId}:`, Object.keys(apiKeys));
+    } catch (e) {
+      console.log(`⚠️ Failed to parse existing API keys, creating new object:`, e.message);
+      apiKeys = {};
+    }
+
+    const currentDate = new Date();
+    const currentMonth = `${currentDate.getFullYear()}-${String(currentDate.getMonth() + 1).padStart(2, '0')}`;
+
+    // Store the encrypted API key and initialize usage tracking
+    if (provider === 'tavily') {
+      apiKeys.tavilyApiKey = encryptedKey;
+      // Initialize Tavily freemium tracking if not exists (check for undefined specifically)
+      // CRITICAL: Never reset existing usage count - this should be ONE-TIME only
+      if (typeof apiKeys.tavilyUsageCount === 'undefined') {
+        apiKeys.tavilyUsageCount = 0;
+        apiKeys.tavilyUsageLimit = 3;
+        apiKeys.tavilyFirstUsedDate = currentDate.toISOString();
+        console.log(`🆕 Initializing Tavily freemium tracking for user ${req.user.userId}: 0/3 free searches (FIRST TIME)`);
+      } else {
+        console.log(`📊 Preserving existing Tavily usage for user ${req.user.userId}: ${apiKeys.tavilyUsageCount}/${apiKeys.tavilyUsageLimit} searches used`);
+        console.log(`⚠️  NEVER RESET: This is a one-time freemium limit, not monthly like SERP`);
+      }
+      console.log(`💾 Tavily API key stored for ${req.user.userId}`);
+    } else if (provider === 'serp') {
+      apiKeys.serpApiKey = encryptedKey;
+      // Initialize SERP monthly tracking
+      if (!apiKeys.serpUsageTracking || apiKeys.serpUsageTracking.month !== currentMonth) {
+        apiKeys.serpUsageTracking = {
+          month: currentMonth,
+          searchesUsed: 0,
+          creditsRemaining: 100, // Default free tier
+          lastResetDate: currentDate.toISOString()
+        };
+      }
+      console.log(`💾 SERP API key stored for ${req.user.userId}`);
+    }
+
+    // Update the user document with the new API key
+    const updateResult = await databases.updateDocument(
+      DATABASE_ID,
+      COLLECTION_ID,
+      userDoc.$id,
+      {
+        apiKeys: JSON.stringify(apiKeys)
+      }
+    );
+    
+    console.log(`✅ User document updated successfully for ${req.user.userId}`);
     
     auditLog('key_stored', req.user.userId, {
       ip: req.ip,
@@ -390,23 +776,1425 @@ app.post('/api/proxy/serp/search', authenticateToken, apiRateLimit, async (req, 
   }
 });
 
-// Helper function to get user's API key (simplified)
+// Helper function to increment API usage after successful search
+async function incrementApiUsage(userId, provider) {
+  try {
+    console.log(`📈 Incrementing ${provider} usage for user ${userId}`);
+    
+    // Find the user's profile document
+    const userDocs = await databases.listDocuments(
+      DATABASE_ID,
+      COLLECTION_ID,
+      [Query.equal('accountId', userId)]
+    );
+
+    if (userDocs.documents.length === 0) {
+      console.log(`❌ User profile not found for ${userId} during usage increment`);
+      return false;
+    }
+
+    const userDoc = userDocs.documents[0];
+    
+    // Get API keys
+    let apiKeys = {};
+    try {
+      apiKeys = userDoc.apiKeys ? JSON.parse(userDoc.apiKeys) : {};
+    } catch (e) {
+      console.log(`❌ Failed to parse API keys during usage increment:`, e.message);
+      return false;
+    }
+
+    const currentDate = new Date();
+    const currentMonth = `${currentDate.getFullYear()}-${String(currentDate.getMonth() + 1).padStart(2, '0')}`;
+
+    if (provider === 'tavily') {
+      // Increment Tavily freemium usage (only if using system key)
+      const currentCount = apiKeys.tavilyUsageCount || 0;
+      apiKeys.tavilyUsageCount = currentCount + 1;
+      console.log(`🎯 Tavily usage incremented to ${apiKeys.tavilyUsageCount}/${apiKeys.tavilyUsageLimit || 3}`);
+      
+    } else if (provider === 'serp') {
+      // Update SERP monthly usage tracking
+      if (!apiKeys.serpUsageTracking || apiKeys.serpUsageTracking.month !== currentMonth) {
+        apiKeys.serpUsageTracking = {
+          month: currentMonth,
+          searchesUsed: 0,
+          creditsRemaining: 100, // Default, should be updated based on actual API response
+          lastResetDate: currentDate.toISOString()
+        };
+      }
+      
+      apiKeys.serpUsageTracking.searchesUsed += 1;
+      // Note: creditsRemaining should be updated based on actual API response
+      console.log(`🎯 SERP usage incremented to ${apiKeys.serpUsageTracking.searchesUsed} searches this month`);
+    }
+
+    // Update the user document
+    await databases.updateDocument(
+      DATABASE_ID,
+      COLLECTION_ID,
+      userDoc.$id,
+      {
+        apiKeys: JSON.stringify(apiKeys)
+      }
+    );
+    
+    console.log(`✅ ${provider} usage tracking updated for user ${userId}`);
+    return true;
+    
+  } catch (error) {
+    console.error(`❌ Error incrementing ${provider} usage for ${userId}:`, error);
+    return false;
+  }
+}
+
+// Helper function to get system API key (stored encrypted in database)
+async function getSystemApiKey(provider) {
+  try {
+    const SYSTEM_USER_ID = 'SYSTEM_API_KEYS';
+    
+    // Find the system profile document
+    const systemDocs = await databases.listDocuments(
+      DATABASE_ID,
+      COLLECTION_ID,
+      [Query.equal('accountId', SYSTEM_USER_ID)]
+    );
+
+    if (systemDocs.documents.length === 0) {
+      console.log(`❌ System API keys profile not found`);
+      return null;
+    }
+
+    const systemDoc = systemDocs.documents[0];
+    
+    // Get API keys
+    let apiKeys = {};
+    try {
+      apiKeys = systemDoc.apiKeys ? JSON.parse(systemDoc.apiKeys) : {};
+    } catch (e) {
+      console.log(`❌ Failed to parse system API keys:`, e.message);
+      return null;
+    }
+
+    if (provider === 'tavily') {
+      const encryptedKey = apiKeys.systemTavilyApiKey;
+      if (!encryptedKey) {
+        console.log(`❌ System Tavily API key not found in database`);
+        return null;
+      }
+      
+      try {
+        const decryptedKey = decrypt(encryptedKey);
+        console.log(`✅ System Tavily API key retrieved from database`);
+        return decryptedKey;
+      } catch (error) {
+        console.error(`❌ Failed to decrypt system Tavily API key:`, error.message);
+        return null;
+      }
+    }
+
+    return null;
+  } catch (error) {
+    console.error(`❌ Error retrieving system API key:`, error.message);
+    return null;
+  }
+}
+
+// Helper function to get Tavily account usage from their API
+async function getTavilyAccountUsage(apiKey) {
+  try {
+    // Use the correct /usage endpoint
+    const response = await axios.get('https://api.tavily.com/usage', {
+      headers: {
+        'Authorization': `Bearer ${apiKey}`,
+        'Content-Type': 'application/json'
+      },
+      timeout: 10000
+    });
+    
+    if (response.data) {
+      console.log(`✅ Tavily usage data retrieved:`, response.data);
+      return {
+        totalSearchesLeft: response.data.remaining || response.data.remaining_searches || 0,
+        thisMonthUsage: response.data.used || response.data.used_searches || 0,
+        searchesPerMonth: response.data.limit || response.data.monthly_limit || 0,
+        planName: response.data.plan || response.data.plan_name || 'Unknown Plan'
+      };
+    }
+    
+    return null;
+  } catch (error) {
+    console.error(`❌ Failed to get Tavily usage data:`, error.message);
+    
+    // If usage endpoint fails, try a test search to verify key is valid
+    try {
+      console.log(`🔄 Usage endpoint failed, trying test search to verify key`);
+      const testResponse = await axios.post('https://api.tavily.com/search', {
+        api_key: apiKey,
+        query: 'test',
+        search_depth: 'basic',
+        include_answer: false,
+        include_images: false,
+        include_raw_content: false,
+        max_results: 1
+      }, {
+        timeout: 10000,
+        headers: {
+          'Content-Type': 'application/json'
+        }
+      });
+      
+      // If test search works, return a generic "API Key Connected" status
+      if (testResponse.data) {
+        return {
+          totalSearchesLeft: 999, // Unknown, but key is valid
+          thisMonthUsage: 0,
+          searchesPerMonth: 999,
+          planName: 'API Key Connected',
+          isGeneric: true
+        };
+      }
+    } catch (testError) {
+      console.error(`❌ Both usage and test search failed:`, testError.message);
+    }
+    
+    return null;
+  }
+}
+
+// Helper function to get user's API key
 async function getUserApiKey(userId, provider) {
   try {
-    // This is a simplified implementation
-    // In practice, you'd query your Appwrite database
-    // const response = await databases.listDocuments(DATABASE_ID, COLLECTION_ID, [
-    //   Query.equal('userId', userId),
-    //   Query.equal('provider', provider)
-    // ]);
+    console.log(`🔑 Looking up ${provider} API key for user ${userId}`);
     
-    // For now, return null to indicate key not found
+    // Find the user's profile document
+    const userDocs = await databases.listDocuments(
+      DATABASE_ID,
+      COLLECTION_ID,
+      [Query.equal('accountId', userId)]
+    );
+
+    if (userDocs.documents.length === 0) {
+      console.log(`❌ User profile not found for ${userId}`);
+      return null;
+    }
+
+    const userDoc = userDocs.documents[0];
+    console.log(`✅ Found user document for ${userId}`);
+    
+    // Get API keys
+    let apiKeys = {};
+    try {
+      apiKeys = userDoc.apiKeys ? JSON.parse(userDoc.apiKeys) : {};
+      console.log(`📋 API keys object parsed for ${userId}:`, Object.keys(apiKeys));
+    } catch (e) {
+      console.log(`❌ Failed to parse API keys for ${userId}:`, e.message);
+      return null;
+    }
+
+    // Return the appropriate encrypted API key with usage info
+    if (provider === 'tavily') {
+      const key = apiKeys.tavilyApiKey;
+      const usageCount = apiKeys.tavilyUsageCount || 0;
+      const usageLimit = apiKeys.tavilyUsageLimit || 3;
+      
+      // Production logging - minimal
+      
+      // Check if user has exceeded free limit and needs their own key
+      if (!key && usageCount >= usageLimit) {
+        console.log(`❌ User ${userId} has exceeded free Tavily limit and has no API key`);
+        return null;
+      }
+      
+      return {
+        key: key || 'SYSTEM_KEY', // Use system key if user hasn't provided one and still has free uses
+        usageCount,
+        usageLimit,
+        hasFreesLeft: usageCount < usageLimit,
+        isUserKey: !!key
+      };
+    } else if (provider === 'serp') {
+      const key = apiKeys.serpApiKey;
+      const currentDate = new Date();
+      const currentMonth = `${currentDate.getFullYear()}-${String(currentDate.getMonth() + 1).padStart(2, '0')}`;
+      
+      let usageTracking = apiKeys.serpUsageTracking;
+      
+      // Reset tracking if month has changed
+      if (!usageTracking || usageTracking.month !== currentMonth) {
+        usageTracking = {
+          month: currentMonth,
+          searchesUsed: 0,
+          creditsRemaining: 100, // Default free tier (adjust based on actual plan)
+          lastResetDate: currentDate.toISOString()
+        };
+        console.log(`🔄 SERP usage tracking reset for new month: ${currentMonth}`);
+      }
+      
+      console.log(`🔍 SERP API key ${key ? 'found' : 'not found'} for ${userId}`);
+      console.log(`📊 SERP usage: ${usageTracking.searchesUsed} searches used, ${usageTracking.creditsRemaining} credits remaining`);
+      
+      if (!key) {
+        console.log(`❌ User ${userId} has no SERP API key`);
+        return null;
+      }
+      
+      return {
+        key,
+        usageTracking,
+        isUserKey: true
+      };
+    }
+    
+    console.log(`❌ Unknown provider ${provider} for ${userId}`);
     return null;
     
   } catch (error) {
-    console.error('Error fetching user API key:', error);
+    console.error(`❌ Error fetching ${provider} API key for ${userId}:`, error);
     return null;
   }
+}
+
+// Get API usage stats endpoint
+app.get('/api/usage/:provider', authenticateToken, async (req, res) => {
+  try {
+    const { provider } = req.params;
+    
+    if (!['tavily', 'serp'].includes(provider)) {
+      return res.status(400).json({ error: 'Invalid provider' });
+    }
+
+    // Add retry mechanism for API key lookup
+    let keyInfo = null;
+    let retries = 3;
+    
+    while (retries > 0 && !keyInfo) {
+      keyInfo = await getUserApiKey(req.user.userId, provider);
+      if (!keyInfo && retries > 1) {
+        // Retrying API key lookup
+        await new Promise(resolve => setTimeout(resolve, 100)); // 100ms delay
+      }
+      retries--;
+    }
+    
+    if (!keyInfo) {
+      return res.json({
+        provider,
+        hasApiKey: false,
+        usageInfo: null
+      });
+    }
+
+    if (provider === 'tavily') {
+      // If user has their own API key, fetch real account usage
+      if (keyInfo.isUserKey && keyInfo.key) {
+        try {
+          const decryptedKey = decrypt(keyInfo.key);
+          const accountData = await getTavilyAccountUsage(decryptedKey);
+          
+          if (accountData) {
+            return res.json({
+              provider: 'tavily',
+              hasApiKey: true,
+              usageInfo: {
+                usageCount: accountData.thisMonthUsage,
+                usageLimit: accountData.searchesPerMonth,
+                hasFreesLeft: accountData.totalSearchesLeft > 0,
+                isFreemium: false,
+                creditsRemaining: accountData.totalSearchesLeft,
+                planName: accountData.planName
+              }
+            });
+          }
+        } catch (error) {
+          console.error(`❌ Failed to get Tavily account data:`, error.message);
+        }
+      }
+      
+      // Fallback to freemium data or default
+      return res.json({
+        provider: 'tavily',
+        hasApiKey: keyInfo.isUserKey,
+        usageInfo: {
+          usageCount: keyInfo.usageCount,
+          usageLimit: keyInfo.usageLimit,
+          hasFreesLeft: keyInfo.hasFreesLeft,
+          isFreemium: !keyInfo.isUserKey
+        }
+      });
+    } else if (provider === 'serp') {
+      if (!keyInfo || !keyInfo.isUserKey || !keyInfo.key) {
+        return res.json({
+          provider: 'serp',
+          hasApiKey: false,
+          usageInfo: null
+        });
+      }
+
+      try {
+        // Get real usage data from SERP API account endpoint
+        console.log(`🔍 Fetching real SERP usage data from account API`);
+        
+        const decryptedApiKey = decrypt(keyInfo.key);
+        const accountResponse = await axios.get(`https://serpapi.com/account.json?api_key=${decryptedApiKey}`);
+        
+        if (accountResponse.data) {
+          const accountData = accountResponse.data;
+          console.log(`✅ SERP account data retrieved:`, {
+            totalSearchesLeft: accountData.total_searches_left,
+            thisMonthUsage: accountData.this_month_usage,
+            searchesPerMonth: accountData.searches_per_month,
+            planName: accountData.plan_name
+          });
+
+          return res.json({
+            provider: 'serp',
+            hasApiKey: true,
+            usageInfo: {
+              searchesUsed: accountData.this_month_usage || 0,
+              creditsRemaining: accountData.total_searches_left || 0,
+              searchesPerMonth: accountData.searches_per_month || 250,
+              planName: accountData.plan_name || 'Unknown Plan',
+              lastUpdated: new Date().toISOString(),
+              month: `${new Date().getFullYear()}-${new Date().getMonth()}`,
+              lastResetDate: new Date().toISOString()
+            }
+          });
+        } else {
+          throw new Error('No data returned from SERP account API');
+        }
+      } catch (serpApiError) {
+        console.error('❌ SERP API account error:', serpApiError.message);
+        
+        // Fallback to our internal tracking if SERP API fails
+        const fallbackSearchesUsed = keyInfo.usageTracking?.searchesUsed || 0;
+        const fallbackCreditsRemaining = Math.max(0, 250 - fallbackSearchesUsed);
+        
+        console.log(`🔄 Using fallback data: ${fallbackSearchesUsed} used, ${fallbackCreditsRemaining} remaining`);
+        
+        return res.json({
+          provider: 'serp',
+          hasApiKey: keyInfo.isUserKey,
+          usageInfo: {
+            searchesUsed: fallbackSearchesUsed,
+            creditsRemaining: fallbackCreditsRemaining,
+            month: keyInfo.usageTracking?.month || `${new Date().getFullYear()}-${new Date().getMonth()}`,
+            lastResetDate: keyInfo.usageTracking?.lastResetDate || new Date().toISOString(),
+            searchesPerMonth: 250,
+            planName: 'Fallback (API Error)',
+            lastUpdated: new Date().toISOString(),
+            error: 'Could not fetch real-time data from SERP API'
+          }
+        });
+      }
+    }
+
+  } catch (error) {
+    console.error('Usage stats error:', error);
+    res.status(500).json({ error: 'Failed to get usage stats' });
+  }
+});
+
+// Job Search Proxy - handles individual job board searches
+app.post('/api/proxy/search-jobs', authenticateToken, apiRateLimit, async (req, res) => {
+  try {
+    const { query, location, jobBoard, provider, timeFilter } = req.body;
+    
+    if (!query || !location || !jobBoard || !provider) {
+      return res.status(400).json({ error: 'Missing required fields (query, location, jobBoard, provider)' });
+    }
+
+    // Validate provider
+    if (!['tavily', 'serp'].includes(provider)) {
+      return res.status(400).json({ error: 'Invalid provider' });
+    }
+
+    console.log(`🔍 Job search request: ${query} in ${location} on ${jobBoard} via ${provider}`);
+
+    // Get user's encrypted API key for the provider with usage info
+    const keyInfo = await getUserApiKey(req.user.userId, provider);
+    
+    if (!keyInfo) {
+      return res.status(404).json({ error: `${provider.charAt(0).toUpperCase() + provider.slice(1)} API key not found` });
+    }
+
+    // Handle Tavily freemium logic
+    if (provider === 'tavily') {
+      if (!keyInfo.isUserKey && !keyInfo.hasFreesLeft) {
+        return res.status(403).json({ 
+          error: `You've used all ${keyInfo.usageLimit} free Tavily searches. Please provide your own Tavily API key.`,
+          requiresApiKey: true,
+          usageCount: keyInfo.usageCount,
+          usageLimit: keyInfo.usageLimit
+        });
+      }
+    }
+
+    // Decrypt the API key (or use system key for Tavily freemium)
+    let apiKey;
+    if (provider === 'tavily' && keyInfo.key === 'SYSTEM_KEY') {
+      // Use encrypted system Tavily API key from database
+      apiKey = await getSystemApiKey('tavily');
+      if (!apiKey) {
+        console.error('❌ System Tavily API key not found in database');
+        return res.status(500).json({ 
+          error: 'System Tavily API key not configured. Please contact administrator.',
+          code: 'MISSING_SYSTEM_API_KEY'
+        });
+      }
+      console.log(`🆓 Using encrypted system Tavily API key for freemium user ${req.user.userId} (${keyInfo.usageCount + 1}/${keyInfo.usageLimit})`);
+    } else {
+      apiKey = decrypt(keyInfo.key);
+    }
+
+    let searchResults = [];
+
+    // Build job board specific search query based on the specified patterns
+    let jobBoardQuery;
+    const jobTitle = `"${query}"`;
+    const searchLocation = `"${location}"`;
+    
+    switch (jobBoard.toLowerCase()) {
+      case 'greenhouse':
+        jobBoardQuery = `${jobTitle} site:greenhouse.io ${searchLocation}`;
+        break;
+      case 'lever':
+        jobBoardQuery = `${jobTitle} site:lever.co ${searchLocation}`;
+        break;
+      case 'ashby':
+        jobBoardQuery = `${jobTitle} site:ashbyhq.com ${searchLocation}`;
+        break;
+      case 'pinpoint':
+        jobBoardQuery = `${jobTitle} site:pinpointhq.com ${searchLocation}`;
+        break;
+      case 'paylocity':
+        jobBoardQuery = `${jobTitle} site:recruiting.paylocity.com ${searchLocation}`;
+        break;
+      case 'keka':
+        jobBoardQuery = `${jobTitle} site:keka.com ${searchLocation}`;
+        break;
+      case 'workable':
+        jobBoardQuery = `${jobTitle} site:jobs.workable.com ${searchLocation}`;
+        break;
+      case 'breezyhr':
+        jobBoardQuery = `${jobTitle} site:breezy.hr ${searchLocation}`;
+        break;
+      case 'wellfound':
+        jobBoardQuery = `${jobTitle} site:wellfound.com ${searchLocation}`;
+        break;
+      case 'y combinator work at a startup':
+        jobBoardQuery = `${jobTitle} site:workatastartup.com ${searchLocation}`;
+        break;
+      case 'oracle cloud':
+        jobBoardQuery = `${jobTitle} site:oraclecloud.com ${searchLocation}`;
+        break;
+      case 'workday jobs':
+        jobBoardQuery = `${jobTitle} site:myworkdayjobs.com ${searchLocation}`;
+        break;
+      case 'recruitee':
+        jobBoardQuery = `${jobTitle} site:recruitee.com ${searchLocation}`;
+        break;
+      case 'rippling':
+        jobBoardQuery = `${jobTitle} (site:rippling.com OR site:rippling-ats.com) ${searchLocation}`;
+        break;
+      case 'gusto':
+        jobBoardQuery = `${jobTitle} site:jobs.gusto.com ${searchLocation}`;
+        break;
+      case 'smartrecruiters':
+        jobBoardQuery = `${jobTitle} site:jobs.smartrecruiters.com ${searchLocation}`;
+        break;
+      case 'jazzhr':
+        jobBoardQuery = `${jobTitle} site:applytojob.com ${searchLocation}`;
+        break;
+      case 'jobvite':
+        jobBoardQuery = `${jobTitle} site:jobvite.com ${searchLocation}`;
+        break;
+      case 'icims':
+        jobBoardQuery = `${jobTitle} site:icims.com ${searchLocation}`;
+        break;
+      case 'builtin':
+        jobBoardQuery = `${jobTitle} site:builtin.com/job/ ${searchLocation}`;
+        break;
+      case 'adp':
+        jobBoardQuery = `${jobTitle} (site:workforcenow.adp.com OR site:myjobs.adp.com) ${searchLocation}`;
+        break;
+      case 'jobs subdomain':
+        jobBoardQuery = `${jobTitle} site:jobs.* ${searchLocation}`;
+        break;
+      case 'talent subdomain':
+        jobBoardQuery = `${jobTitle} site:talent.* ${searchLocation}`;
+        break;
+      default:
+        // Generic search for other job boards
+        jobBoardQuery = `${jobTitle} ${searchLocation} jobs ${jobBoard}`;
+        break;
+    }
+    
+    // Add time filter to query for Tavily (SERP handles it separately)
+    if (provider === 'tavily' && timeFilter && timeFilter !== 'anytime') {
+      const timeFilterMapping = {
+        'day': 'tbs=qdr:d',
+        'week': 'tbs=qdr:w', 
+        'month': 'tbs=qdr:m',
+        'year': 'tbs=qdr:y',
+        'qdr:d': 'tbs=qdr:d',
+        'qdr:w': 'tbs=qdr:w',
+        'qdr:m': 'tbs=qdr:m',
+        'qdr:y': 'tbs=qdr:y'
+      };
+      
+      const timeFilterText = timeFilterMapping[timeFilter];
+      if (timeFilterText) {
+        jobBoardQuery += ` ${timeFilterText}`;
+      }
+    }
+    
+    console.log(`🔍 Built search query: "${jobBoardQuery}"`);
+
+    // Use the appropriate search engine
+    if (provider === 'tavily') {
+      // Tavily search
+      const tavilyResponse = await axios.post('https://api.tavily.com/search', {
+        api_key: apiKey,
+        query: jobBoardQuery,
+        search_depth: 'basic',
+        include_answer: false,
+        include_images: false,
+        include_raw_content: false,
+        max_results: 50
+      }, {
+        timeout: 30000,
+        headers: {
+          'Content-Type': 'application/json'
+        }
+      });
+
+      // Process Tavily results into job format
+      const tavilyResults = tavilyResponse.data.results || [];
+      
+      // Debug: Log first result to see available fields
+      if (tavilyResults.length > 0) {
+        console.log(`🔍 Sample Tavily result fields:`, Object.keys(tavilyResults[0]));
+        console.log(`🔍 Sample Tavily result:`, JSON.stringify(tavilyResults[0], null, 2));
+      }
+      
+      searchResults = tavilyResults.map(result => {
+        const cleanTitle = cleanJobTitle(result.title, 'tavily', jobBoard);
+        
+        // Try to extract date from various possible fields
+        let datePosted = 'Recently';
+        if (result.published_date) {
+          datePosted = result.published_date;
+        } else if (result.date) {
+          datePosted = result.date;
+        } else if (result.timestamp) {
+          datePosted = new Date(result.timestamp).toLocaleDateString();
+        }
+        
+        // Enhanced company extraction for Tavily Greenhouse results
+        let company = extractCompanyFromUrl(result.url) || extractCompanyFromJobBoard(jobBoard);
+        
+        // Clean up problematic company names
+        if (company) {
+          company = company
+            .replace(/\?error=true/i, '')
+            .replace(/\?.*$/, '') // Remove query parameters
+            .replace(/^embed$/i, 'Company') // Replace "Embed" with generic
+            .replace(/^www\./i, '')
+            .replace(/\.com$/i, '');
+            
+          // Capitalize properly
+          if (company.length > 1) {
+            company = company.charAt(0).toUpperCase() + company.slice(1).toLowerCase();
+          }
+        }
+        
+        return {
+          title: cleanTitle,
+          company: company,
+          location: location,
+          url: result.url,
+          description: result.content || '',
+          datePosted: datePosted,
+          source: jobBoard
+        };
+      });
+
+    } else if (provider === 'serp') {
+      // SERP API search
+      const params = new URLSearchParams({
+        api_key: apiKey,
+        engine: 'google',
+        q: jobBoardQuery,
+        num: '50'
+      });
+
+      if (timeFilter && timeFilter !== 'anytime') {
+        const timeFilters = {
+          'day': 'qdr:d',
+          'week': 'qdr:w', 
+          'month': 'qdr:m',
+          'year': 'qdr:y',
+          'qdr:d': 'qdr:d',
+          'qdr:w': 'qdr:w',
+          'qdr:m': 'qdr:m',
+          'qdr:y': 'qdr:y'
+        };
+        params.append('tbs', timeFilters[timeFilter] || timeFilter);
+      }
+
+      const serpResponse = await axios.get(`https://serpapi.com/search?${params}`, {
+        timeout: 30000
+      });
+
+      // Process SERP results into job format
+      const organicResults = serpResponse.data.organic_results || [];
+      
+      // Debug: Log first result to see available fields
+      if (organicResults.length > 0) {
+        console.log(`🔍 Sample SERP result fields:`, Object.keys(organicResults[0]));
+        console.log(`🔍 Sample SERP result:`, JSON.stringify(organicResults[0], null, 2));
+      }
+      
+      searchResults = organicResults.map(result => {
+        const cleanTitle = cleanJobTitle(result.title, 'serp', jobBoard);
+        
+        // Try to extract date from various possible fields
+        let datePosted = 'Recently';
+        if (result.date) {
+          datePosted = result.date;
+        } else if (result.displayed_link && result.displayed_link.includes('•')) {
+          // Sometimes dates appear in the displayed link like "company.com › careers › 2 days ago"
+          const parts = result.displayed_link.split('•');
+          const lastPart = parts[parts.length - 1]?.trim();
+          if (lastPart && (lastPart.includes('ago') || lastPart.includes('day') || lastPart.includes('hour'))) {
+            datePosted = lastPart;
+          }
+        }
+        
+        return {
+          title: cleanTitle,
+          company: extractCompanyFromUrl(result.link) || extractCompanyFromJobBoard(jobBoard),
+          location: location,
+          url: result.link,
+          description: result.snippet || '',
+          datePosted: datePosted,
+          source: jobBoard
+        };
+      });
+    }
+
+    // Filter out results that don't look like jobs
+    searchResults = searchResults.filter(job => {
+      if (!job.title || !job.url || job.title.length < 3) {
+        console.log(`❌ Filtering out: missing title/url or too short`);
+        return false;
+      }
+      
+      // Additional check: if title is empty after cleaning, filter it out
+      if (!job.title.trim()) {
+        console.log(`❌ Filtering out: empty title after cleaning`);
+        return false;
+      }
+      
+      const titleLower = job.title.toLowerCase();
+      
+      // Filter out generic/non-job titles
+      const badPatterns = [
+        'error', 'not found', '404', 'page not found',
+        'careers home', 'job search', 'apply now',
+        'open roles', 'all jobs', 'browse jobs',
+        'fearless careers', 'job application for',
+        'career opportunities', 'join our team',
+        'company careers', 'job boards',
+        // Tavily-specific bad patterns
+        'salary', 'glassdoor', 'indeed.com', 'linkedin',
+        'jobs in united states', 'now hiring', 'employment',
+        'software engineer greenhouse jobs', 'greenhouse software jobs',
+        'greenhouse software software engineer',
+        '$', 'k-$', 'remote job', 'jobs (now hiring)',
+        /^(remote)$/i,
+        /^(hiring)$/i,
+        /^(jobs)$/i,
+        /^(careers)$/i,
+        /^(apply)$/i,
+        /^(open roles?)$/i,
+        /salary.*\$.*k/i,
+        /\$\d+k?-\$\d+k?/i,
+        /jobs.*indeed/i,
+        /jobs.*linkedin/i,
+        /jobs.*glassdoor/i,
+        /greenhouse software.*jobs/i,
+        /\d+.*jobs.*united states/i
+      ];
+      
+      for (const pattern of badPatterns) {
+        if (typeof pattern === 'string' && titleLower.includes(pattern)) {
+          console.log(`❌ Filtering out generic title: "${job.title}"`);
+          return false;
+        } else if (pattern instanceof RegExp && pattern.test(titleLower)) {
+          console.log(`❌ Filtering out generic title: "${job.title}"`);
+          return false;
+        }
+      }
+      
+      // Job board-specific filtering logic
+      const jobBoardLower = jobBoard.toLowerCase();
+      
+      // GREENHOUSE-SPECIFIC FILTERING (both SERP and Tavily)
+      if (jobBoardLower === 'greenhouse') {
+        const url = job.url.toLowerCase();
+        
+        // Filter out URLs that are not actual job postings
+        const badUrlPatterns = [
+          'glassdoor.com', 'indeed.com', 'linkedin.com', 'levels.fyi',
+          'salary.com', 'ziprecruiter.com', 'glassdoor', 'reddit.com',
+          'github.com', 'careers.zoom.us', 'careers.point72.com'
+        ];
+        
+        for (const badUrl of badUrlPatterns) {
+          if (url.includes(badUrl)) {
+            console.log(`❌ Filtering out bad URL: "${job.title}" from ${badUrl}`);
+            return false;
+          }
+        }
+        
+        // Enhanced Greenhouse filtering - Remove generic and irrelevant results (both SERP and Tavily)
+        const greenhouseGenericPatterns = [
+          /^greenhouse\s+jobs$/i,
+          /^jobs\s+at\s+.+\s*-\s*greenhouse\s+software$/i,
+          /^jobs\s+at\s+.+$/i, // This will catch "Jobs at Remote", "Jobs at Company", etc.
+          /^apply\s*-\s*my$/i,
+          /^n26\s+jobs$/i,
+          /^ai\s+training\s+for\s+.+\s+writers?$/i,
+          /careers?\s*&?\s*job\s*openings?/i,
+          /the\s+leader\s+in/i,
+          /join\s+our\s+team/i,
+          /career\s+opportunities/i,
+          /greenhouse\s+software$/i,
+          /embed$/i,
+          /^management\s+consultant\s*-\s*experienced\s+at$/i,
+          /\s+at\s*$/i
+        ];
+        
+        // Additional SERP-specific Greenhouse patterns
+        if (provider === 'serp') {
+          greenhouseGenericPatterns.push(
+            /careers?\s*&?\s*job\s*openings?\s*-\s*.+/i,
+            /- starpower$/i,
+            /at two six/i,
+            /at faraday/i,
+            /at id\.me/i,
+            /- about/i,
+            /nextiva careers/i,
+            /- the leader in/i,
+            /- careers$/i,
+            /- - careers$/i
+          );
+        }
+        
+        for (const pattern of greenhouseGenericPatterns) {
+          if (pattern.test(titleLower)) {
+            console.log(`❌ Filtering out generic ${provider.toUpperCase()} Greenhouse career page: "${job.title}"`);
+            return false;
+          }
+        }
+        
+        // Prefer actual greenhouse job board URLs
+        if (url.includes('boards.greenhouse.io')) {
+          console.log(`✅ Prioritizing Greenhouse job: "${job.title}" at ${job.company}`);
+          return true;
+        }
+        
+        // Filter out results that don't seem to be actual job postings
+        if (titleLower.includes('greenhouse') && !url.includes('boards.greenhouse.io')) {
+          console.log(`❌ Filtering out generic Greenhouse reference: "${job.title}"`);
+          return false;
+        }
+      }
+      
+      
+      // INDEED-SPECIFIC FILTERING
+      if (jobBoardLower === 'indeed') {
+        const url = job.url.toLowerCase();
+        
+        // Indeed-specific bad patterns
+        const indeedBadPatterns = [
+          /^upload your resume$/i,
+          /^indeed jobs$/i,
+          /^find jobs$/i,
+          /^post your resume$/i,
+          /^sign in to indeed$/i,
+          /^indeed career guide$/i,
+          /salary.*indeed/i,
+          /reviews.*indeed/i,
+          /^indeed salary$/i,
+          /^company reviews$/i
+        ];
+        
+        for (const pattern of indeedBadPatterns) {
+          if (pattern.test(titleLower)) {
+            console.log(`❌ Filtering out generic ${provider.toUpperCase()} Indeed page: "${job.title}"`);
+            return false;
+          }
+        }
+      }
+      
+      // LINKEDIN-SPECIFIC FILTERING  
+      if (jobBoardLower === 'linkedin') {
+        const url = job.url.toLowerCase();
+        
+        // LinkedIn-specific bad patterns
+        const linkedinBadPatterns = [
+          /^linkedin$/i,
+          /^sign in.*linkedin$/i,
+          /^join linkedin$/i,
+          /^professional profiles$/i,
+          /^linkedin learning$/i,
+          /^networking on linkedin$/i,
+          /salary insights.*linkedin/i,
+          /^linkedin premium$/i,
+          /^people also viewed$/i
+        ];
+        
+        for (const pattern of linkedinBadPatterns) {
+          if (pattern.test(titleLower)) {
+            console.log(`❌ Filtering out generic ${provider.toUpperCase()} LinkedIn page: "${job.title}"`);
+            return false;
+          }
+        }
+      }
+      
+      // WORKDAY-SPECIFIC FILTERING
+      if (jobBoardLower === 'workday') {
+        const url = job.url.toLowerCase();
+        
+        // Workday-specific bad patterns
+        const workdayBadPatterns = [
+          /^workday$/i,
+          /^sign in.*workday$/i,
+          /^workday careers$/i,
+          /^workday job search$/i,
+          /^browse jobs.*workday$/i,
+          /^workday application$/i
+        ];
+        
+        for (const pattern of workdayBadPatterns) {
+          if (pattern.test(titleLower)) {
+            console.log(`❌ Filtering out generic ${provider.toUpperCase()} Workday page: "${job.title}"`);
+            return false;
+          }
+        }
+      }
+      
+      // LEVER-SPECIFIC FILTERING
+      if (jobBoardLower === 'lever') {
+        const url = job.url.toLowerCase();
+        
+        // Lever-specific bad patterns
+        const leverBadPatterns = [
+          /^lever$/i,
+          /^jobs.*lever$/i,
+          /^lever careers$/i,
+          /^current openings$/i,
+          /^all jobs.*lever$/i
+        ];
+        
+        for (const pattern of leverBadPatterns) {
+          if (pattern.test(titleLower)) {
+            console.log(`❌ Filtering out generic ${provider.toUpperCase()} Lever page: "${job.title}"`);
+            return false;
+          }
+        }
+      }
+      
+      // BAMBOOHR-SPECIFIC FILTERING
+      if (jobBoardLower === 'bamboohr') {
+        const url = job.url.toLowerCase();
+        
+        // BambooHR-specific bad patterns
+        const bamboohrBadPatterns = [
+          /^bamboohr$/i,
+          /^careers.*bamboo$/i,
+          /^job board.*bamboo$/i,
+          /^bamboo.*careers$/i
+        ];
+        
+        for (const pattern of bamboohrBadPatterns) {
+          if (pattern.test(titleLower)) {
+            console.log(`❌ Filtering out generic ${provider.toUpperCase()} BambooHR page: "${job.title}"`);
+            return false;
+          }
+        }
+      }
+      
+      // Keep jobs that look legitimate
+      console.log(`✅ Keeping job: "${job.title}" at ${job.company}`);
+      return true;
+    });
+
+    // Increment usage tracking after successful search (only for freemium/system keys)
+    // For Tavily: Only increment if using system key (freemium), not user's own key
+    // For SERP: Always increment since user is always using their own key
+    if (provider === 'serp') {
+      await incrementApiUsage(req.user.userId, provider);
+    } else if (provider === 'tavily') {
+      // Only increment Tavily usage if user was using system key (freemium)
+      const userKeyInfo = await getUserApiKey(req.user.userId, 'tavily');
+      if (userKeyInfo && !userKeyInfo.isUserKey) {
+        console.log(`🎯 Incrementing Tavily freemium usage for system key usage`);
+        await incrementApiUsage(req.user.userId, provider);
+      } else {
+        console.log(`🔑 User used their own Tavily API key - not incrementing freemium count`);
+      }
+    }
+
+    auditLog('job_search', req.user.userId, {
+      ip: req.ip,
+      userAgent: req.get('User-Agent'),
+      provider,
+      query,
+      location,
+      jobBoard,
+      resultCount: searchResults.length,
+      success: true
+    });
+
+    res.json(searchResults);
+
+  } catch (error) {
+    console.error('Job search proxy error:', error.message);
+    
+    auditLog('job_search', req.user.userId, {
+      ip: req.ip,
+      userAgent: req.get('User-Agent'),
+      success: false,
+      error: error.message
+    });
+
+    if (error.response?.status === 401) {
+      res.status(401).json({ error: 'Invalid API key' });
+    } else if (error.response?.status === 429) {
+      res.status(429).json({ error: 'API rate limit exceeded' });
+    } else if (error.response?.status === 402) {
+      res.status(402).json({ error: 'API credits exhausted' });
+    } else {
+      res.status(500).json({ error: 'Search request failed' });
+    }
+  }
+});
+
+// Helper functions for job processing
+function buildJobBoardQuery(query, location, jobBoard, provider) {
+  const board = jobBoard.toLowerCase();
+  
+  if (provider === 'tavily') {
+    // Tavily doesn't need site restrictions, just good keywords
+    return `${query} jobs ${location} ${getJobBoardName(board)}`;
+  } else {
+    // SERP API with specific site targeting
+    const domain = getJobBoardDomain(board);
+    return `"${query}" jobs "${location}" site:${domain}`;
+  }
+}
+
+function getJobBoardName(boardId) {
+  const names = {
+    'greenhouse': 'Greenhouse',
+    'lever': 'Lever',
+    'ashby': 'Ashby',
+    'pinpoint': 'Pinpoint',
+    'paylocity': 'Paylocity',
+    'keka': 'Keka',
+    'workable': 'Workable',
+    'breezyhr': 'BreezyHR',
+    'wellfound': 'Wellfound AngelList',
+    'ycombinator': 'Y Combinator',
+    'oracle': 'Oracle',
+    'workday': 'Workday',
+    'recruitee': 'Recruitee',
+    'rippling': 'Rippling',
+    'gusto': 'Gusto',
+    'smartrecruiters': 'SmartRecruiters',
+    'jazzhr': 'JazzHR',
+    'jobvite': 'Jobvite',
+    'icims': 'iCIMS',
+    'builtin': 'Builtin',
+    'adp': 'ADP'
+  };
+  return names[boardId] || boardId;
+}
+
+function extractCompanyFromJobBoard(jobBoard) {
+  // Fallback company name based on job board
+  const companies = {
+    'greenhouse': 'Company via Greenhouse',
+    'lever': 'Company via Lever',
+    'ashby': 'Company via Ashby',
+    'pinpoint': 'Company via Pinpoint',
+    'paylocity': 'Company via Paylocity',
+    'keka': 'Company via Keka',
+    'workable': 'Company via Workable',
+    'breezyhr': 'Company via BreezyHR',
+    'wellfound': 'Company via Wellfound',
+    'ycombinator': 'Company via Y Combinator',
+    'oracle': 'Company via Oracle',
+    'workday': 'Company via Workday',
+    'recruitee': 'Company via Recruitee',
+    'rippling': 'Company via Rippling',
+    'gusto': 'Company via Gusto',
+    'smartrecruiters': 'Company via SmartRecruiters',
+    'jazzhr': 'Company via JazzHR',
+    'jobvite': 'Company via Jobvite',
+    'icims': 'Company via iCIMS',
+    'builtin': 'Company via Builtin',
+    'adp': 'Company via ADP'
+  };
+  return companies[jobBoard] || 'Company';
+}
+
+function cleanJobTitle(title, provider, jobBoard) {
+  if (!title) return '';
+  
+  console.log(`🧹 Cleaning title: "${title}" [${provider.toUpperCase()}/${jobBoard.toUpperCase()}]`);
+  
+  let cleaned = title;
+  const providerUpper = provider.toUpperCase();
+  const jobBoardLower = jobBoard.toLowerCase();
+  
+  // ==========================================
+  // AI-BASED CLEANING LOGIC - Provider & Job Board Specific
+  // ==========================================
+  
+  // PHASE 1: PROVIDER-SPECIFIC PRE-PROCESSING
+  if (provider === 'serp') {
+    // SERP/Google Search specific cleaning - More structured titles
+    cleaned = cleaned.replace(/^Job Application for\s+/i, ''); // Google often adds this
+    cleaned = cleaned.replace(/\s*-\s*Google Search$/i, ''); // Remove Google Search suffix
+    cleaned = cleaned.replace(/\s*\|\s*Indeed\.com$/i, ''); // Remove Indeed.com suffix
+    cleaned = cleaned.replace(/\s*\|\s*LinkedIn$/i, ''); // Remove LinkedIn suffix
+    cleaned = cleaned.replace(/\s*\|\s*Glassdoor$/i, ''); // Remove Glassdoor suffix
+  } else if (provider === 'tavily') {
+    // Tavily AI Search specific cleaning - More raw/unprocessed titles
+    cleaned = cleaned.replace(/\s*\|\s*Tavily$/i, ''); // Remove Tavily suffix
+    cleaned = cleaned.replace(/^.*?\s*›\s*/i, ''); // Remove breadcrumb navigation (Company › Job)
+    cleaned = cleaned.replace(/\s*\.\.\.$/, ''); // Remove truncation indicators
+    cleaned = cleaned.replace(/\s*\[Read More\]$/i, ''); // Remove read more indicators
+  }
+  
+  // PHASE 2: JOB BOARD-SPECIFIC CLEANING
+  if (jobBoardLower === 'greenhouse') {
+    if (provider === 'serp') {
+      // SERP + Greenhouse specific patterns
+      cleaned = cleaned.replace(/- starpower$/i, '');
+      cleaned = cleaned.replace(/at Two Six\s+/i, '');
+      cleaned = cleaned.replace(/at Faraday\s+/i, '');
+      cleaned = cleaned.replace(/at ID\.me\s+/i, '');
+      cleaned = cleaned.replace(/- About\s+/i, '');
+      cleaned = cleaned.replace(/Nextiva Careers & Job Openings - The Leader In/i, '');
+      cleaned = cleaned.replace(/- Careers$/i, '');
+      cleaned = cleaned.replace(/- - Careers$/i, '');
+      cleaned = cleaned.replace(/^Greenhouse Job Application for\s+/i, '');
+    } else if (provider === 'tavily') {
+      // Tavily + Greenhouse specific patterns
+      cleaned = cleaned.replace(/^Greenhouse Jobs at\s+/i, '');
+      cleaned = cleaned.replace(/^Jobs at\s+.+\s*-\s*Greenhouse Software$/i, '');
+      cleaned = cleaned.replace(/^Apply\s*-\s*My$/i, '');
+      cleaned = cleaned.replace(/^N26 Jobs$/i, '');
+      cleaned = cleaned.replace(/^AI Training for\s+.+\s+Writers?$/i, '');
+    }
+  } else if (jobBoardLower === 'indeed') {
+    if (provider === 'serp') {
+      // SERP + Indeed specific patterns
+      cleaned = cleaned.replace(/\s*-\s*Indeed$/i, '');
+      cleaned = cleaned.replace(/Apply Now\s*-\s*Indeed$/i, '');
+      cleaned = cleaned.replace(/\$[\d,]+\/year$/i, ''); // Remove salary info
+    } else if (provider === 'tavily') {
+      // Tavily + Indeed specific patterns
+      cleaned = cleaned.replace(/^Indeed\s*:\s*/i, '');
+      cleaned = cleaned.replace(/\s*on Indeed$/i, '');
+    }
+  } else if (jobBoardLower === 'linkedin') {
+    if (provider === 'serp') {
+      // SERP + LinkedIn specific patterns
+      cleaned = cleaned.replace(/\s*\|\s*LinkedIn$/i, '');
+      cleaned = cleaned.replace(/Apply on LinkedIn$/i, '');
+    } else if (provider === 'tavily') {
+      // Tavily + LinkedIn specific patterns  
+      cleaned = cleaned.replace(/^LinkedIn\s*:\s*/i, '');
+      cleaned = cleaned.replace(/\s*on LinkedIn$/i, '');
+    }
+  }
+  
+  // PHASE 3: AI-BASED UNIVERSAL PATTERN RECOGNITION
+  // Remove obvious prefixes and meta-information
+  cleaned = cleaned.replace(/[\[\(]\d{4}[\]\)]\s*/, ''); // Year prefixes
+  cleaned = cleaned.replace(/^.*?\s+Jobs:\s*/, ''); // "Company Jobs:" prefixes
+  cleaned = cleaned.replace(/^(Job Application for|Apply for|Application for)\s*/i, ''); // Application language
+  cleaned = cleaned.replace(/^\d+[\.\)]\s*/, ''); // Numbered prefixes
+  
+  // Phase 2: Advanced Truncation Detection and Cleanup
+  // Handle common truncation patterns with AI-like reasoning
+  
+  // Pattern: "(Remote ...)" or "(Hybrid ...)" - Remove entire truncated location info
+  cleaned = cleaned.replace(/\s*\((Remote|Hybrid|On-site|Contract|Full-time|Part-time)\s*\.{3,}[^)]*\)?\s*$/gi, '');
+  
+  // Pattern: "Title, Department & ..." - Clean truncated departmental info
+  cleaned = cleaned.replace(/,\s*(Strategy|Corporate|Business|Technical|Operations|Marketing|Sales)\s*&?\s*\.{3,}.*$/gi, '');
+  
+  // Pattern: "Title - Company..." or "Title at Company..." - Remove truncated company references
+  cleaned = cleaned.replace(/\s*[-–]\s*[A-Z][a-zA-Z]*\.{3,}.*$/g, '');
+  cleaned = cleaned.replace(/\s+at\s+[A-Z][a-zA-Z]*\.{3,}.*$/gi, '');
+  
+  // Pattern: Any title ending with "..." (generic truncation)
+  cleaned = cleaned.replace(/\.{3,}.*$/, '');
+  
+  // Phase 3: Location and Meta-info Removal (AI contextual understanding)
+  // Remove location info that doesn't belong in job titles
+  cleaned = cleaned.replace(/\s*[-–]\s*(United States|USA|US|Remote|Hybrid|On-site|Worldwide|Global).*$/i, '');
+  cleaned = cleaned.replace(/\s*\((United States|USA|US|Remote|Hybrid|On-site|Contract|Full-time|Part-time)\)?\s*$/i, '');
+  
+  // Phase 4: Company Name Pattern Recognition
+  // Advanced company suffix removal using AI-like pattern detection
+  
+  // Pattern: "Title - CompanyName" (single company word)
+  cleaned = cleaned.replace(/\s*[-–]\s*[A-Z][a-z]+(\s+(Inc|LLC|Corp|Ltd|Co)\.?)?\s*$/g, '');
+  
+  // Pattern: "Title at CompanyName" (comprehensive company detection)
+  cleaned = cleaned.replace(/\s+at\s+([A-Z][a-zA-Z]+(\s+[A-Z][a-zA-Z]+)*(\s+(Inc|LLC|Corp|Ltd|Co|Technologies|Systems|Solutions)\.?)?)\s*$/i, '');
+  
+  // Phase 5: Job Board and Platform Detection
+  const jobBoardPattern = new RegExp(`\\s*(${[
+    'Greenhouse', 'Lever', 'Ashby', 'Workday', 'Oracle', 'BreezyHR', 'Wellfound',
+    'SmartRecruiters', 'JazzHR', 'Jobvite', 'iCIMS', 'Builtin', 'ADP', 'Paylocity',
+    'Keka', 'Workable', 'Pinpoint', 'Recruitee', 'Rippling', 'Gusto'
+  ].join('|')})\\s*$`, 'i');
+  cleaned = cleaned.replace(jobBoardPattern, '');
+  
+  // Phase 6: Enhanced Google Search + Greenhouse Artifact Removal
+  const artifactPatterns = [
+    /\s*-\s*starpower\s*$/gi,
+    /\s+at\s+Two\s+Six\s*\.{3,}.*$/gi,
+    /\s+at\s+Faraday\s*\.{3,}.*$/gi,
+    /\s+at\s+ID\.me\s*$/gi,
+    /\s*-\s*About\s+[^-]+$/gi,
+    /\s*Careers?\s*&?\s*Job\s*Openings?\s*-\s*.*$/gi,
+    /\s*-\s*The\s+Leader\s+In\s+.*$/gi,
+    /\s*-\s*-?\s*Careers?\s*$/gi
+  ];
+  
+  artifactPatterns.forEach(pattern => {
+    cleaned = cleaned.replace(pattern, '');
+  });
+  
+  // Phase 7: Smart Parentheses Handling
+  // AI logic: If parentheses are incomplete, either complete or remove
+  if (cleaned.includes('(') && !cleaned.includes(')')) {
+    // If it looks like location/type info, remove it
+    if (/\([A-Za-z\s]*$/.test(cleaned)) {
+      cleaned = cleaned.replace(/\([^)]*$/, '');
+    } else {
+      cleaned = cleaned + ')';
+    }
+  }
+  
+  // Phase 8: Generic Pattern Elimination
+  // AI reasoning: These patterns indicate non-specific job content
+  const genericPatterns = [
+    /^Jobs?\s+at\s+[^\-]+$/i,
+    /^Careers?\s*$/i,
+    /^(Jobs?|Apply|Hiring|Open\s+Roles?|Opportunities)$/i,
+    /^(Current\s+job\s+openings?|Available\s+positions?)$/i
+  ];
+  
+  for (const pattern of genericPatterns) {
+    if (pattern.test(cleaned.trim())) {
+      cleaned = '';
+      break;
+    }
+  }
+  
+  // Phase 9: Advanced Company Number Detection and Removal
+  // Pattern: "CompanyName123" or "Company77" etc.
+  cleaned = cleaned.replace(/([A-Za-z]+)\d+\s*$/, '$1');
+  
+  // Phase 9.5: ENHANCED PROVIDER-AWARE CLEANUP
+  // Clean truncated "at" endings (universal)
+  cleaned = cleaned.replace(/\s+at\s*$/, '');
+  
+  // Provider-specific advanced patterns
+  if (provider === 'serp') {
+    // SERP tends to have more structured company suffixes
+    cleaned = cleaned.replace(/\s*-\s*Company Careers$/i, '');
+    cleaned = cleaned.replace(/\s*\|\s*Jobs$/i, '');
+  } else if (provider === 'tavily') {
+    // Tavily tends to have more raw, unprocessed patterns
+    cleaned = cleaned.replace(/^[A-Z0-9]+\s+jobs$/i, ''); // Remove standalone "N26 Jobs" type patterns
+    cleaned = cleaned.replace(/^apply\s*-\s*my$/i, ''); // Clean "Apply - My" type meaningless patterns
+  }
+  
+  // Phase 10: Final Cleanup and Normalization
+  // AI-powered text normalization
+  cleaned = cleaned
+    .trim()
+    .replace(/\s+/g, ' ') // Normalize whitespace
+    .replace(/[,\-\|]+$/, '') // Remove trailing punctuation
+    .replace(/^\s*[-–]\s*/, '') // Remove leading dashes
+    .replace(/\s*[-–]\s*$/, ''); // Remove trailing dashes
+  
+  // Final validation: Ensure we have meaningful content
+  if (cleaned.length < 3 || /^[^a-zA-Z]*$/.test(cleaned)) {
+    cleaned = '';
+  }
+  
+  console.log(`✨ AI Cleaned title: "${cleaned}" [${providerUpper}/${jobBoard.toUpperCase()}]`);
+  
+  return cleaned;
+}
+
+function extractCompanyFromUrl(url) {
+  try {
+    console.log(`🏢 Extracting company from URL: ${url}`);
+    const hostname = new URL(url).hostname;
+    
+    // Handle specific job board patterns
+    if (hostname.includes('greenhouse.io')) {
+      // Extract from URLs like: company-name.greenhouse.io or boards.greenhouse.io/company-name
+      if (hostname.startsWith('boards.')) {
+        const match = url.match(/boards\.greenhouse\.io\/([^\/]+)/);
+        if (match) {
+          const company = formatCompanyName(match[1]);
+          console.log(`✅ Greenhouse company from path: ${company}`);
+          return company;
+        }
+      } else if (hostname.startsWith('job-boards.')) {
+        // Handle job-boards.greenhouse.io URLs - try to extract company from path
+        const pathMatch = url.match(/job-boards\.greenhouse\.io\/([^\/]+)/);
+        if (pathMatch && pathMatch[1]) {
+          const company = formatCompanyName(pathMatch[1]);
+          console.log(`✅ Greenhouse company from job-boards path: ${company}`);
+          return company;
+        }
+        // If no specific company in path, it's an aggregator
+        console.log(`⚠️ Greenhouse job-boards subdomain - using generic name`);
+        return "Multiple Companies (Greenhouse)";
+      } else {
+        const subdomain = hostname.split('.')[0];
+        if (subdomain !== 'www' && subdomain !== 'boards' && subdomain !== 'job-boards') {
+          const company = formatCompanyName(subdomain);
+          console.log(`✅ Greenhouse company from subdomain: ${company}`);
+          return company;
+        }
+      }
+    }
+    
+    if (hostname.includes('lever.co')) {
+      // Extract from URLs like: company-name.lever.co or jobs.lever.co/company-name
+      if (hostname.startsWith('jobs.')) {
+        const match = url.match(/jobs\.lever\.co\/([^\/]+)/);
+        if (match) {
+          const company = formatCompanyName(match[1]);
+          console.log(`✅ Lever company from path: ${company}`);
+          return company;
+        }
+      } else {
+        const subdomain = hostname.split('.')[0];
+        if (subdomain !== 'www' && subdomain !== 'jobs') {
+          const company = formatCompanyName(subdomain);
+          console.log(`✅ Lever company from subdomain: ${company}`);
+          return company;
+        }
+      }
+    }
+    
+    if (hostname.includes('ashby.com')) {
+      // Extract from URLs like: company-name.ashby.com
+      const subdomain = hostname.split('.')[0];
+      if (subdomain !== 'www') {
+        const company = formatCompanyName(subdomain);
+        console.log(`✅ Ashby company: ${company}`);
+        return company;
+      }
+    }
+    
+    // Try to extract company from URL path for other patterns
+    const pathMatches = [
+      url.match(/\/(?:jobs|careers|apply|company)\/([^\/\?]+)/i),
+      url.match(/\/([^\/\?]+)\/(?:jobs|careers|apply)/i),
+      url.match(/\.com\/([^\/\?]+)/i)
+    ];
+    
+    for (const match of pathMatches) {
+      if (match && match[1]) {
+        const candidate = match[1].toLowerCase();
+        // Skip generic terms and IDs
+        if (!['jobs', 'careers', 'apply', 'company', 'about', 'contact', 'home', 'index'].includes(candidate) 
+            && !/^\d+$/.test(candidate)
+            && candidate.length > 2) {
+          const company = formatCompanyName(candidate);
+          console.log(`✅ Company from path: ${company}`);
+          return company;
+        }
+      }
+    }
+    
+    // Extract from main domain as fallback
+    let company = hostname.replace(/^(www|jobs|careers|boards)\./, '');
+    company = company.split('.')[0];
+    
+    // Skip generic terms
+    if (['jobs', 'careers', 'apply', 'talent', 'hiring', 'monster', 'indeed', 'linkedin'].includes(company.toLowerCase())) {
+      console.log(`❌ Skipping generic domain: ${company}`);
+      return null;
+    }
+    
+    const finalCompany = formatCompanyName(company);
+    console.log(`✅ Company from domain: ${finalCompany}`);
+    return finalCompany;
+  } catch (e) {
+    console.log(`❌ Error extracting company: ${e.message}`);
+    return null;
+  }
+}
+
+function formatCompanyName(name) {
+  if (!name) return null;
+  
+  // Clean up the company name
+  name = name.replace(/[-_]/g, ' ');
+  name = name.replace(/\b\w/g, l => l.toUpperCase());
+  
+  // Remove common suffixes
+  name = name.replace(/\s+(Inc|Corp|LLC|Ltd|Co)$/i, '');
+  
+  return name.trim();
+}
+
+function getJobBoardDomain(boardId) {
+  const domains = {
+    'greenhouse': 'greenhouse.io',
+    'lever': 'lever.co',
+    'ashby': 'ashby.com',
+    'pinpoint': 'pinpoint.com',
+    'paylocity': 'paylocity.com',
+    'keka': 'keka.com',
+    'workable': 'workable.com',
+    'breezyhr': 'breezyhr.com',
+    'wellfound': 'wellfound.com',
+    'ycombinator': 'ycombinator.com',
+    'oracle': 'oracle.com',
+    'workday': 'workday.com',
+    'recruitee': 'recruitee.com',
+    'rippling': 'rippling.com',
+    'gusto': 'gusto.com',
+    'smartrecruiters': 'smartrecruiters.com',
+    'jazzhr': 'jazzhr.com',
+    'jobvite': 'jobvite.com',
+    'icims': 'icims.com',
+    'builtin': 'builtin.com',
+    'adp': 'adp.com'
+  };
+  return domains[boardId] || boardId;
 }
 
 // Error handler

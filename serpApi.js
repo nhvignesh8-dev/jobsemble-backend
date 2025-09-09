@@ -20,7 +20,7 @@ class SerpApiService {
         api_key: this.apiKey,
         engine: 'google',
         q: query,
-        num: options.num || 50, // Number of results
+        num: options.num || 100, // Number of results
         ...options
       };
 

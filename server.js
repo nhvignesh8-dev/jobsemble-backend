@@ -914,11 +914,16 @@ async function getTavilyAccountUsage(apiKey) {
     
     if (response.data) {
       console.log(`✅ Tavily usage data retrieved:`, response.data);
+      
+      // Map the correct fields from Tavily API response
+      const account = response.data.account || {};
+      const key = response.data.key || {};
+      
       return {
-        totalSearchesLeft: response.data.remaining || response.data.remaining_searches || 0,
-        thisMonthUsage: response.data.used || response.data.used_searches || 0,
-        searchesPerMonth: response.data.limit || response.data.monthly_limit || 0,
-        planName: response.data.plan || response.data.plan_name || 'Unknown Plan'
+        totalSearchesLeft: (account.plan_limit || 0) - (account.plan_usage || 0),
+        thisMonthUsage: account.plan_usage || key.usage || 0,
+        searchesPerMonth: account.plan_limit || 0,
+        planName: account.current_plan || 'Unknown Plan'
       };
     }
     

@@ -242,6 +242,77 @@ async function scrapeViaGoogleSearch(boardId, jobTitle, location, retryCount = 0
 
     console.log(`🔍 Google search query: ${query}`);
 
+    // CAPTCHA detection and browser popup system
+    const handleCaptcha = async (page) => {
+      const captchaSelectors = [
+        '[id*="captcha"]',
+        '[class*="captcha"]',
+        'iframe[src*="recaptcha"]',
+        'iframe[src*="hcaptcha"]',
+        '.g-recaptcha',
+        '#recaptcha',
+        'div[data-callback]',
+        '[title*="reCAPTCHA"]'
+      ];
+      
+      // Check for CAPTCHA
+      for (const selector of captchaSelectors) {
+        try {
+          const element = await page.$(selector);
+          if (element) {
+            console.log(`🛡️ CAPTCHA detected: ${selector}`);
+            const currentUrl = page.url();
+            
+            // Launch a visible browser window for the user to solve CAPTCHA
+            console.log('🌐 Opening visible browser window for CAPTCHA solving...');
+            
+            const captchaBrowser = await puppeteer.launch({
+              headless: false, // Visible browser window
+              defaultViewport: null,
+              args: [
+                '--start-maximized',
+                '--no-sandbox',
+                '--disable-setuid-sandbox'
+              ]
+            });
+            
+            const captchaPage = await captchaBrowser.newPage();
+            await captchaPage.goto(currentUrl);
+            
+            // Store the session for later continuation
+            const sessionId = Date.now().toString();
+            
+            const captchaResponse = {
+              requiresCaptcha: true,
+              captchaUrl: currentUrl,
+              sessionId: sessionId,
+              message: 'CAPTCHA detected! A browser window has opened for you to solve it. Click "Continue Search" after solving the CAPTCHA.',
+              instructions: [
+                '1. Solve the CAPTCHA in the opened browser window',
+                '2. Leave the browser window open',
+                '3. Click "Continue Search" button below',
+                '4. We will resume your job search automatically'
+              ]
+            };
+            
+            // Store browser and page references for later use
+            global.captchaSessions = global.captchaSessions || {};
+            global.captchaSessions[sessionId] = {
+              browser: captchaBrowser,
+              page: captchaPage,
+              originalSearchParams: { jobTitle, location, jobBoards, timePeriod, maxPages, country }
+            };
+            
+            console.log(`💾 CAPTCHA session ${sessionId} stored, browser window opened for user`);
+            return captchaResponse;
+          }
+        } catch (e) {
+          // Continue checking other selectors
+        }
+      }
+      return null;
+    };
+
     // Generate random user agent
     const userAgents = [
       'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
@@ -327,13 +398,33 @@ async function scrapeViaGoogleSearch(boardId, jobTitle, location, retryCount = 0
 
     let page = await browser.newPage();
 
-    // Advanced stealth configuration
+    // Advanced stealth configuration to avoid CAPTCHA
     await page.setUserAgent(randomUserAgent);
     
-    // Set viewport to common resolution
-    await page.setViewport({ width: 1366, height: 768 });
+    // Remove webdriver traces
+    await page.evaluateOnNewDocument(() => {
+      delete window.navigator.webdriver;
+      window.navigator.chrome = { runtime: {} };
+      Object.defineProperty(navigator, 'languages', {
+        get: () => ['en-US', 'en']
+      });
+      Object.defineProperty(navigator, 'plugins', {
+        get: () => [1, 2, 3, 4, 5]
+      });
+    });
+    
+    // Set viewport to look like real browser
+    await page.setViewport({ 
+      width: 1366, 
+      height: 768,
+      deviceScaleFactor: 1,
+      hasTouch: false,
+      isLandscape: false,
+      isMobile: false
+    });
 
-    // Remove webdriver property
+    // Add random delays to simulate human behavior
+    const randomDelay = () => Math.floor(Math.random() * 2000) + 1000;
     await page.evaluateOnNewDocument(() => {
       Object.defineProperty(navigator, 'webdriver', {
         get: () => undefined,
@@ -450,6 +541,14 @@ async function scrapeViaGoogleSearch(boardId, jobTitle, location, retryCount = 0
       // Human-like behavior: First visit google.com like a real user
       console.log('🤖 Acting like human: visiting google.com first...');
       await page.goto('https://www.google.com', { waitUntil: 'networkidle2' });
+      
+      // Check for CAPTCHA immediately after loading Google
+      const captchaCheck = await handleCaptcha(page);
+      if (captchaCheck) {
+        console.log('🛡️ CAPTCHA detected on Google homepage, returning to frontend...');
+        await browser.close();
+        return captchaCheck; // Return CAPTCHA response instead of jobs
+      }
       
       // Random delay like a human reading the page
       const initialDelay = Math.random() * 2000 + 1000; // 1-3 seconds
@@ -1328,7 +1427,213 @@ app.get('/api/test-tavily', async (req, res) => {
   }
 });
 
+// Function to continue Google search after CAPTCHA is solved
+async function continueGoogleSearchAfterCaptcha(browser, page, searchParams) {
+  try {
+    const { jobTitle, location, jobBoards, timePeriod, maxPages, country } = searchParams;
+    
+    console.log('🔄 Continuing Google search with solved CAPTCHA...');
+    
+    // Build search query (same logic as original function)
+    let query;
+    const boardId = jobBoards?.[0]?.toLowerCase();
+    
+    if (boardId === 'lever') {
+      query = `"${jobTitle}" site:jobs.lever.co "${location}"`;
+    } else if (boardId === 'greenhouse') {
+      query = `"${jobTitle}" site:boards.greenhouse.io "${location}"`;
+    } else if (boardId === 'ashby') {
+      query = `"${jobTitle}" site:jobs.ashbyhq.com "${location}"`;
+    } else if (boardId === 'workable') {
+      query = `"${jobTitle}" site:apply.workable.com "${location}"`;
+    } else if (boardId === 'talent') {
+      query = `"${jobTitle}" site:talent.* "${location}"`;
+    } else {
+      query = `"${jobTitle}" "${location}" jobs site:${boardId}.com`;
+    }
+    
+    console.log(`🔍 Continuing with query: ${query}`);
+    
+    // Navigate to Google search with our query
+    const searchUrl = `https://www.google.com/search?q=${encodeURIComponent(query)}&num=50`;
+    await page.goto(searchUrl, { waitUntil: 'networkidle2' });
+    
+    // Add random human-like delay
+    await new Promise(resolve => setTimeout(resolve, Math.random() * 1000 + 500));
+    
+    // Apply time filter if specified
+    if (timePeriod && timePeriod !== 'anytime') {
+      const timeFilters = {
+        'day': 'qdr:d',
+        'week': 'qdr:w', 
+        'month': 'qdr:m',
+        'year': 'qdr:y'
+      };
+      
+      if (timeFilters[timePeriod]) {
+        const filteredUrl = `${searchUrl}&tbs=${timeFilters[timePeriod]}`;
+        await page.goto(filteredUrl, { waitUntil: 'networkidle2' });
+        await new Promise(resolve => setTimeout(resolve, Math.random() * 1000 + 500));
+      }
+    }
+    
+    // Extract search results (reuse existing extraction logic)
+    const results = await extractGoogleSearchResults(page, maxPages || 1);
+    
+    // Close the CAPTCHA browser
+    await browser.close();
+    
+    return results;
+    
+  } catch (error) {
+    console.error('❌ Error continuing search after CAPTCHA:', error);
+    try {
+      await browser.close();
+    } catch (e) {}
+    throw error;
+  }
+}
+
+// Extract Google search results (separated for reuse)
+async function extractGoogleSearchResults(page, maxPages = 1) {
+  const allJobs = [];
+  
+  for (let pageNum = 1; pageNum <= maxPages; pageNum++) {
+    console.log(`📄 Processing search results page ${pageNum}/${maxPages}...`);
+    
+    const pageJobs = await page.evaluate(() => {
+      const results = [];
+      const searchResults = document.querySelectorAll('div.g, div[data-sokoban-container]');
+      
+      searchResults.forEach((result, index) => {
+        try {
+          const linkElement = result.querySelector('h3')?.closest('a') || result.querySelector('a h3')?.parentElement;
+          const titleElement = result.querySelector('h3');
+          const snippetElement = result.querySelector('.VwiC3b, .s3v9rd, .St0SEd');
+          
+          if (linkElement && titleElement) {
+            const link = linkElement.href;
+            const title = titleElement.textContent.trim();
+            const snippet = snippetElement ? snippetElement.textContent.trim() : '';
+            
+            if (link && title && !link.includes('google.com') && !link.includes('youtube.com')) {
+              results.push({
+                title: title,
+                url: link,
+                snippet: snippet,
+                source: 'Google Search',
+                foundOn: new Date().toISOString().split('T')[0]
+              });
+            }
+          }
+        } catch (e) {
+          console.error('Error processing search result:', e);
+        }
+      });
+      
+      return results;
+    });
+    
+    console.log(`✅ Page ${pageNum}: Found ${pageJobs.length} job listings`);
+    allJobs.push(...pageJobs);
+    
+    // Navigate to next page if available and not last page
+    if (pageNum < maxPages) {
+      try {
+        const nextButton = await page.$('a[aria-label="Next page"], a#pnnext');
+        if (nextButton) {
+          await nextButton.click();
+          await page.waitForNavigation({ waitUntil: 'networkidle2', timeout: 30000 });
+          await new Promise(resolve => setTimeout(resolve, Math.random() * 2000 + 1000));
+        } else {
+          console.log('📄 No more pages available');
+          break;
+        }
+      } catch (e) {
+        console.log('📄 Could not navigate to next page:', e.message);
+        break;
+      }
+    }
+  }
+  
+  return allJobs;
+}
+
 // Initialize Chrome and start server
+// Endpoint to continue search after CAPTCHA is solved
+app.post('/api/continue-after-captcha', async (req, res) => {
+  try {
+    const { sessionId } = req.body;
+    
+    if (!sessionId || !global.captchaSessions || !global.captchaSessions[sessionId]) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid or expired CAPTCHA session'
+      });
+    }
+    
+    const session = global.captchaSessions[sessionId];
+    const { browser, page, originalSearchParams } = session;
+    
+    console.log(`🔄 Continuing search for session ${sessionId}...`);
+    
+    // Check if CAPTCHA is solved by trying to access the search page
+    try {
+      await page.reload({ waitUntil: 'networkidle2' });
+      
+      // Check if we're still on a CAPTCHA page
+      const captchaStillPresent = await page.$('[id*="captcha"], [class*="captcha"], iframe[src*="recaptcha"]');
+      
+      if (captchaStillPresent) {
+        return res.json({
+          success: false,
+          message: 'CAPTCHA not yet solved. Please complete the CAPTCHA and try again.',
+          stillRequiresCaptcha: true
+        });
+      }
+      
+      console.log('✅ CAPTCHA solved successfully, continuing search...');
+      
+      // Continue with the original search using the CAPTCHA-solved browser
+      const searchResults = await continueGoogleSearchAfterCaptcha(
+        browser, 
+        page, 
+        originalSearchParams
+      );
+      
+      // Clean up the session
+      delete global.captchaSessions[sessionId];
+      
+      res.json({
+        success: true,
+        data: searchResults,
+        message: 'Search completed successfully after CAPTCHA solving'
+      });
+      
+    } catch (error) {
+      console.error('❌ Error continuing search after CAPTCHA:', error);
+      
+      // Clean up on error
+      try {
+        await browser.close();
+      } catch (e) {}
+      delete global.captchaSessions[sessionId];
+      
+      res.status(500).json({
+        success: false,
+        message: 'Error continuing search after CAPTCHA'
+      });
+    }
+    
+  } catch (error) {
+    console.error('❌ Error in continue-after-captcha endpoint:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Internal server error'
+    });
+  }
+});
+
 async function startServer() {
   // Ensure Chrome is installed for Puppeteer
   await ensureChromeInstalled();

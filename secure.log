@@ -1,0 +1,21 @@
+🔒 Secure API Proxy running on port 3001
+🛡️ Security features enabled:
+  - Helmet security headers
+  - Rate limiting
+  - API key encryption
+  - Audit logging
+  - JWT authentication
+  - Input validation
+AUDIT: {"timestamp":"2025-09-09T02:31:14.674Z","action":"token_issued","userId":"test-user","ip":"::1","userAgent":"curl/8.7.1","apiKeyPresent":false,"success":true}
+AUDIT: {"timestamp":"2025-09-09T02:31:57.744Z","action":"token_issued","userId":"test-user","ip":"::1","userAgent":"curl/8.7.1","apiKeyPresent":false,"success":true}
+Key storage error: TypeError: crypto.createCipher is not a function
+    at encrypt (file:///Users/vignesh/Documents/GitHub/job-scout-automaton/secure-backend/server.js:95:25)
+    at file:///Users/vignesh/Documents/GitHub/job-scout-automaton/secure-backend/server.js:213:26
+    at Layer.handle [as handle_request] (/Users/vignesh/Documents/GitHub/job-scout-automaton/secure-backend/node_modules/express/lib/router/layer.js:95:5)
+    at next (/Users/vignesh/Documents/GitHub/job-scout-automaton/secure-backend/node_modules/express/lib/router/route.js:149:13)
+    at authenticateToken (file:///Users/vignesh/Documents/GitHub/job-scout-automaton/secure-backend/server.js:126:5)
+    at Layer.handle [as handle_request] (/Users/vignesh/Documents/GitHub/job-scout-automaton/secure-backend/node_modules/express/lib/router/layer.js:95:5)
+    at next (/Users/vignesh/Documents/GitHub/job-scout-automaton/secure-backend/node_modules/express/lib/router/route.js:149:13)
+    at Route.dispatch (/Users/vignesh/Documents/GitHub/job-scout-automaton/secure-backend/node_modules/express/lib/router/route.js:119:3)
+    at Layer.handle [as handle_request] (/Users/vignesh/Documents/GitHub/job-scout-automaton/secure-backend/node_modules/express/lib/router/layer.js:95:5)
+    at /Users/vignesh/Documents/GitHub/job-scout-automaton/secure-backend/node_modules/express/lib/router/index.js:284:15

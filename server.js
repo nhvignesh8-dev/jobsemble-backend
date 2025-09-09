@@ -2,16 +2,35 @@ import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
 import puppeteer from 'puppeteer';
-import { searchJobListings } from './src/tavily.js';
+import { searchJobListings } from './src/services/tavily.js';
+import { SerpApiService } from './cloud-backend/serpApi.js';
 
-// Check Chrome installation (using pre-built Docker image)
+// Install Chrome browser if not present (for cloud deployment)
 async function ensureChromeInstalled() {
   try {
-    const executablePath = process.env.PUPPETEER_EXECUTABLE_PATH || '/usr/bin/google-chrome-stable';
+    const executablePath = puppeteer.executablePath();
     console.log('🔍 Chrome path:', executablePath);
-    console.log('✅ Using pre-installed Chrome from Docker image');
   } catch (error) {
-    console.log('⚠️ Chrome check failed:', error.message);
+    console.log('⚠️ Chrome not found, attempting to install...');
+    try {
+      const { spawn } = await import('child_process');
+      await new Promise((resolve, reject) => {
+        const install = spawn('npx', ['puppeteer', 'browsers', 'install', 'chrome'], {
+          stdio: 'inherit'
+        });
+        install.on('close', (code) => {
+          if (code === 0) {
+            console.log('✅ Chrome installed successfully');
+            resolve(code);
+          } else {
+            console.log('❌ Chrome installation failed with code:', code);
+            reject(new Error(`Chrome installation failed with code ${code}`));
+          }
+        });
+      });
+    } catch (installError) {
+      console.log('❌ Could not install Chrome:', installError.message);
+    }
   }
 }
 
@@ -89,19 +108,19 @@ async function scrapeMultipleJobBoards(jobTitle, selectedBoards, location = 'Uni
       console.log(`🔍 Scraping via ${searchEngine.toUpperCase()} Search API:`, validBoards);
       
       // Process each board sequentially to avoid overwhelming the API
-    for (const board of validBoards) {
-      try {
+      for (const board of validBoards) {
+        try {
           console.log(`🔍 Searching ${JOB_BOARD_CONFIGS[board].name}...`);
-        
+          
         let result;
         if (searchEngine === 'tavily') {
           result = await scrapeViaSearch(board, jobTitle, location, retryCount, timeFilter, apiKey);
         } else if (searchEngine === 'google') {
           result = await scrapeViaGoogleSearch(board, jobTitle, location, retryCount, timeFilter);
-        } else {
-          throw new Error(`Unsupported search engine: ${searchEngine}`);
-        }
-        
+  } else {
+            throw new Error(`Unsupported search engine: ${searchEngine}`);
+          }
+          
           allResults.push(...result);
           
           console.log(`✅ Found ${result.length} jobs from ${JOB_BOARD_CONFIGS[board].name}`);
@@ -122,7 +141,7 @@ async function scrapeMultipleJobBoards(jobTitle, selectedBoards, location = 'Uni
     console.log(`✅ Multi-platform scraping completed. Total unique jobs: ${uniqueJobs.length}`);
     
     return uniqueJobs;
-
+    
   } catch (error) {
     console.error('💥 Multi-platform scraping error:', error);
     throw error;
@@ -139,7 +158,7 @@ async function scrapeViaSearch(boardId, jobTitle, location = 'United States', re
   console.log(`🔍 Searching ${config.name} via Tavily API...`);
   console.log(`⏰ Time filter: ${timeFilter}`);
   console.log(`🔑 Using API key: ${tavilyApiKey ? 'User-provided' : 'System'}`);
-
+  
   try {
     // Use our Tavily service to search for jobs with dynamic API key
     const searchResults = await searchJobListings(jobTitle, location, [boardId], timeFilter, tavilyApiKey);
@@ -164,7 +183,7 @@ async function scrapeViaSearch(boardId, jobTitle, location = 'United States', re
     
     console.log(`✅ Successfully processed ${jobs.length} jobs from ${config.name}`);
     return jobs;
-    
+
   } catch (error) {
     console.error(`❌ Tavily search failed for ${config.name}:`, error);
     
@@ -177,7 +196,7 @@ async function scrapeViaSearch(boardId, jobTitle, location = 'United States', re
   }
 }
 
-// Google Search implementation using Puppeteer  
+// Google Search implementation using Puppeteer
 async function scrapeViaGoogleSearch(boardId, jobTitle, location, retryCount = 0, timeFilter = 'qdr:d') {
   const config = JOB_BOARD_CONFIGS[boardId];
   if (!config) {
@@ -323,38 +342,17 @@ async function scrapeViaGoogleSearch(boardId, jobTitle, location, retryCount = 0
     ];
     const randomUserAgent = userAgents[Math.floor(Math.random() * userAgents.length)];
 
-    // Detect if we're in a cloud environment where Chrome might not work
-    const isCloudEnvironment = process.env.CLOUD_PROVIDER || process.env.NODE_ENV === 'production';
-    const cloudProvider = process.env.CLOUD_PROVIDER || 'unknown';
-    
-    let browser;
-    
-    // Try cloud-compatible Chrome first, fallback to local if needed
-    if (isCloudEnvironment) {
-      console.log(`🌐 Cloud environment detected (${cloudProvider}), attempting cloud-compatible Chrome...`);
-      
-      try {
-        // Try connecting to Browserless Chrome service or use remote Chrome
-        browser = await puppeteer.connect({
-          browserWSEndpoint: process.env.BROWSERLESS_WS_ENDPOINT || 'wss://chrome.browserless.io?token=YOUR_TOKEN'
-        });
-        console.log('✅ Connected to remote Chrome service');
-      } catch (remoteError) {
-        console.log('⚠️ Remote Chrome failed, trying local Chrome with cloud-optimized settings...');
-        
-        // Fallback to local Chrome with maximum compatibility settings
-        browser = await puppeteer.launch({
-          headless: "new",
-          executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || '/usr/bin/chromium-browser',
-          protocolTimeout: 180000, // 180 seconds timeout for cloud environments
-      ignoreDefaultArgs: ['--disable-extensions'],
+    // Launch browser with maximum stealth and cloud compatibility
+    let browser = await puppeteer.launch({
+      headless: "new", // Use new headless mode
+      executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || undefined,
       args: [
         '--no-sandbox',
         '--disable-setuid-sandbox',
         '--disable-dev-shm-usage',
-        '--disable-gpu',
         '--disable-web-security',
         '--disable-features=VizDisplayCompositor',
+        '--disable-blink-features=AutomationControlled',
         '--disable-extensions',
         '--no-first-run',
         '--disable-default-apps',
@@ -363,68 +361,20 @@ async function scrapeViaGoogleSearch(boardId, jobTitle, location, retryCount = 0
         '--disable-background-timer-throttling',
         '--disable-backgrounding-occluded-windows',
         '--disable-renderer-backgrounding',
-        '--disable-blink-features=AutomationControlled',
-        '--no-zygote',
-        '--single-process',
         '--disable-ipc-flooding-protection',
-        '--disable-background-networking',
-        '--disable-software-rasterizer',
-        '--disable-features=TranslateUI',
-        '--disable-ipc-flooding-protection',
-        '--window-size=1920,1080',
-        `--user-data-dir=/tmp/chrome-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
-        `--remote-debugging-port=${9222 + Math.floor(Math.random() * 1000)}`
+        '--window-size=1366,768'
       ]
-        });
-      }
-    } else {
-      // Local development environment
-      console.log('💻 Local environment detected, using local Chrome...');
-      browser = await puppeteer.launch({
-        headless: "new",
-        executablePath: process.env.PUPPETEER_EXECUTABLE_PATH,
-        protocolTimeout: 30000, // 30 seconds for local environment
-        ignoreDefaultArgs: ['--disable-extensions'],
-        args: [
-          '--no-sandbox',
-          '--disable-setuid-sandbox',
-          '--disable-dev-shm-usage',
-          '--disable-gpu',
-          '--disable-web-security',
-          '--window-size=1920,1080'
-        ]
-      });
-    }
+    });
 
     let page = await browser.newPage();
 
-    // Advanced stealth configuration to avoid CAPTCHA
+    // Advanced stealth configuration
     await page.setUserAgent(randomUserAgent);
     
-    // Remove webdriver traces
-    await page.evaluateOnNewDocument(() => {
-      delete window.navigator.webdriver;
-      window.navigator.chrome = { runtime: {} };
-      Object.defineProperty(navigator, 'languages', {
-        get: () => ['en-US', 'en']
-      });
-      Object.defineProperty(navigator, 'plugins', {
-        get: () => [1, 2, 3, 4, 5]
-      });
-    });
+    // Set viewport to common resolution
+    await page.setViewport({ width: 1366, height: 768 });
     
-    // Set viewport to look like real browser
-    await page.setViewport({ 
-      width: 1366, 
-      height: 768,
-      deviceScaleFactor: 1,
-      hasTouch: false,
-      isLandscape: false,
-      isMobile: false
-    });
-
-    // Add random delays to simulate human behavior
-    const randomDelay = () => Math.floor(Math.random() * 2000) + 1000;
+    // Remove webdriver property
     await page.evaluateOnNewDocument(() => {
       Object.defineProperty(navigator, 'webdriver', {
         get: () => undefined,
@@ -520,7 +470,7 @@ async function scrapeViaGoogleSearch(boardId, jobTitle, location, retryCount = 0
       let searchUrl = `https://www.google.com/search?q=${encodeURIComponent(query)}&num=50`; // Show 50 results per page
       
       // Add time filter to URL if specified
-    if (timeFilter && timeFilter !== 'all') {
+      if (timeFilter && timeFilter !== 'all') {
         if (timeFilter === 'qdr:h') {
           searchUrl += '&tbs=qdr:h'; // Past hour
         } else if (timeFilter === 'qdr:d') {
@@ -730,7 +680,7 @@ async function scrapeViaGoogleSearch(boardId, jobTitle, location, retryCount = 0
 
         // Extract search results using multiple selector strategies
         const pageResults = await page.evaluate(() => {
-      const results = [];
+        const results = [];
         
         // Debug: Log what we find on the page
         console.log('🔍 Starting search results extraction...');
@@ -807,7 +757,7 @@ async function scrapeViaGoogleSearch(boardId, jobTitle, location, retryCount = 0
                   continue;
                 }
                 
-          results.push({
+                results.push({
                   title: title,
                   url: linkElement.href,
                   snippet: ''
@@ -843,9 +793,9 @@ async function scrapeViaGoogleSearch(boardId, jobTitle, location, retryCount = 0
             }
           }
         }
-      
-      return results;
-    });
+        
+        return results;
+        });
 
         console.log(`📄 Page ${pageNum}: Found ${pageResults.length} results`);
         
@@ -866,7 +816,7 @@ async function scrapeViaGoogleSearch(boardId, jobTitle, location, retryCount = 0
         }
       }
 
-    await browser.close();
+      await browser.close();
 
       console.log(`✅ Google found ${allSearchResults.length} total results from ${maxPages} pages for ${boardId}`);
 
@@ -921,17 +871,17 @@ async function scrapeViaGoogleSearch(boardId, jobTitle, location, retryCount = 0
           title: cleanJobTitle(result.title),
           url: result.url,
           company: extractCompanyFromUrl(result.url) || extractCompanyFromTitle(result.title),
-        location: location,
+          location: location,
           datePosted: 'Recent', // Google search doesn't provide publication dates
-        source: 'google',
+          source: 'google',
           score: 0 // Google search doesn't provide relevance scores
-      }))
+        }))
         .filter(job => job.title && job.title !== 'Unknown Position'); // Filter out jobs with null/invalid titles
       
       console.log(`✅ Successfully processed ${jobs.length} jobs from ${config.name}`);
       return jobs;
-
-  } catch (error) {
+      
+    } catch (error) {
       await browser.close();
       throw error;
     }
@@ -1321,7 +1271,7 @@ app.post('/api/scrape-jobs', async (req, res) => {
       } else {
         // User has no key and no free searches left
         return res.status(403).json({
-        success: false,
+          success: false,
           error: 'Usage exceeded. Please provide your Tavily API key to continue using this feature.',
           code: 'API_KEY_REQUIRED'
         });
@@ -1358,8 +1308,8 @@ app.post('/api/scrape-jobs', async (req, res) => {
     if (!jobResults || jobResults.length === 0) {
       const errorMessage = lastError?.message || 'No jobs found';
       console.log('❌ No jobs found or scraping failed:', errorMessage);
-    
-    return res.json({
+      
+      return res.json({
         success: true,
         jobs: [],
         message: `No jobs found. ${errorMessage}`,
@@ -1377,7 +1327,7 @@ app.post('/api/scrape-jobs', async (req, res) => {
       searchBackend: searchEngine,
       searchParams: { jobTitle, location, jobBoards, timeFilter, searchEngine }
     });
-
+    
   } catch (error) {
     console.error('💥 API Error:', error);
     res.status(500).json({
@@ -1407,7 +1357,7 @@ app.get('/api/test-tavily', async (req, res) => {
         error: 'Tavily API key not configured'
       });
     }
-
+    
     console.log('🧪 Testing Tavily API...');
     const testResults = await searchJobListings('Software Engineer', 'San Francisco', ['greenhouse']);
     
@@ -1426,6 +1376,29 @@ app.get('/api/test-tavily', async (req, res) => {
     });
   }
 });
+
+// Initialize Chrome and start server
+async function startServer() {
+  // Ensure Chrome is installed for Puppeteer
+  await ensureChromeInstalled();
+  
+  // Start server
+  app.listen(PORT, () => {
+    console.log('🚀 Job Scraping Server running on http://localhost:' + PORT);
+    console.log('📋 Health check: http://localhost:' + PORT + '/api/health');
+    console.log('🔍 Scrape jobs: POST http://localhost:' + PORT + '/api/scrape-jobs');
+    console.log('🧪 Test Tavily: GET http://localhost:' + PORT + '/api/test-tavily');
+    
+    if (SEARCH_BACKEND === 'tavily') {
+      if (TAVILY_API_KEY) {
+        console.log('✅ Tavily API configured and ready');
+      } else {
+        console.log('⚠️ WARNING: TAVILY_API_KEY not set! Please configure your API key.');
+        console.log('📝 Get your API key from: https://app.tavily.com');
+      }
+    }
+  });
+}
 
 // Function to continue Google search after CAPTCHA is solved
 async function continueGoogleSearchAfterCaptcha(browser, page, searchParams) {
@@ -1559,7 +1532,118 @@ async function extractGoogleSearchResults(page, maxPages = 1) {
   return allJobs;
 }
 
-// Initialize Chrome and start server
+// SERP API-based Google search endpoint (Chrome-free alternative)
+app.post('/api/serp-search', async (req, res) => {
+  try {
+    const { 
+      jobTitle, 
+      location, 
+      jobBoards, 
+      timeFilter, 
+      serpApiKey 
+    } = req.body;
+
+    console.log('📨 SERP API search request:', { jobTitle, location, jobBoards, timeFilter });
+
+    // Validate required fields
+    if (!jobTitle || !location || !serpApiKey) {
+      return res.status(400).json({
+        success: false,
+        message: 'Missing required fields: jobTitle, location, serpApiKey'
+      });
+    }
+
+    if (!jobBoards || jobBoards.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'At least one job board must be selected'
+      });
+    }
+
+    const serpApi = new SerpApiService(serpApiKey);
+    let allJobs = [];
+
+    console.log('🚀 Starting SERP API job search...');
+
+    for (const boardId of jobBoards) {
+      try {
+        console.log(`🔍 Searching ${boardId} via SERP API...`);
+        
+        // Build job board-specific query
+        let query;
+        const board = boardId.toLowerCase();
+        
+        if (board === 'lever') {
+          query = `"${jobTitle}" site:jobs.lever.co "${location}"`;
+        } else if (board === 'greenhouse') {
+          query = `"${jobTitle}" site:boards.greenhouse.io "${location}"`;
+        } else if (board === 'ashby') {
+          query = `"${jobTitle}" site:jobs.ashbyhq.com "${location}"`;
+        } else if (board === 'workable') {
+          query = `"${jobTitle}" site:apply.workable.com "${location}"`;
+        } else if (board === 'talent') {
+          query = `"${jobTitle}" site:talent.* "${location}"`;
+        } else {
+          query = `"${jobTitle}" "${location}" jobs site:${board}.com`;
+        }
+
+        const results = await serpApi.searchGoogle(query, {
+          timeFilter: timeFilter,
+          num: 50 // Number of results per job board
+        });
+
+        console.log(`✅ SERP API found ${results.length} jobs for ${boardId}`);
+        allJobs.push(...results);
+
+      } catch (error) {
+        console.error(`❌ SERP API failed for ${boardId}:`, error.message);
+        
+        // Don't fail entire search if one board fails
+        if (error.message.includes('Invalid SERP API key')) {
+          return res.status(401).json({
+            success: false,
+            message: 'Invalid SERP API key. Please check your API key and try again.'
+          });
+        } else if (error.message.includes('rate limit')) {
+          return res.status(429).json({
+            success: false,
+            message: 'SERP API rate limit exceeded. Please wait and try again.'
+          });
+        } else if (error.message.includes('credits exhausted')) {
+          return res.status(402).json({
+            success: false,
+            message: 'SERP API credits exhausted. Please upgrade your plan.'
+          });
+        }
+      }
+    }
+
+    // Deduplicate results by URL
+    const uniqueJobs = allJobs.filter((job, index, array) => 
+      array.findIndex(j => j.url === job.url) === index
+    );
+
+    console.log(`🔄 Deduplicated ${allJobs.length} results to ${uniqueJobs.length} unique jobs`);
+    console.log('✅ SERP API search completed successfully');
+
+    res.json({
+      success: true,
+      jobs: uniqueJobs,
+      totalJobs: uniqueJobs.length,
+      searchBackend: 'serp-api',
+      searchParams: { jobTitle, location, jobBoards, timeFilter }
+    });
+
+  } catch (error) {
+    console.error('❌ SERP API search error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Search failed. Please try again.',
+      error: error.message
+    });
+  }
+});
+
 // Endpoint to continue search after CAPTCHA is solved
 app.post('/api/continue-after-captcha', async (req, res) => {
   try {
@@ -1633,28 +1717,6 @@ app.post('/api/continue-after-captcha', async (req, res) => {
     });
   }
 });
-
-async function startServer() {
-  // Ensure Chrome is installed for Puppeteer
-  await ensureChromeInstalled();
-
-// Start server
-app.listen(PORT, () => {
-    console.log('🚀 Job Scraping Server running on http://localhost:' + PORT);
-    console.log('📋 Health check: http://localhost:' + PORT + '/api/health');
-    console.log('🔍 Scrape jobs: POST http://localhost:' + PORT + '/api/scrape-jobs');
-    console.log('🧪 Test Tavily: GET http://localhost:' + PORT + '/api/test-tavily');
-  
-  if (SEARCH_BACKEND === 'tavily') {
-    if (TAVILY_API_KEY) {
-        console.log('✅ Tavily API configured and ready');
-    } else {
-        console.log('⚠️ WARNING: TAVILY_API_KEY not set! Please configure your API key.');
-      console.log('📝 Get your API key from: https://app.tavily.com');
-    }
-  }
-});
-}
 
 // Start the server
 startServer().catch(error => {

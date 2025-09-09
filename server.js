@@ -1519,7 +1519,18 @@ app.post('/api/proxy/search-jobs', authenticateToken, apiRateLimit, async (req, 
       success: true
     });
 
-    res.json(searchResults);
+    res.json({
+      success: true,
+      jobs: searchResults,
+      totalJobs: searchResults.length,
+      searchBackend: 'digitalocean',
+      searchParams: {
+        jobTitle: query,
+        location: location || '',
+        jobBoards: [jobBoard],
+        timeFilter: timeFilter || 'qdr:d'
+      }
+    });
 
   } catch (error) {
     console.error('Job search proxy error:', error.message);

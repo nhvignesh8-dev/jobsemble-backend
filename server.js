@@ -2202,6 +2202,53 @@ function getJobBoardDomain(boardId) {
   return domains[boardId] || boardId;
 }
 
+// API endpoint to update individual cell in Google Sheet
+app.post('/api/update-sheet-cell', authenticateToken, async (req, res) => {
+  try {
+    const { sheetUrl, row, column, value } = req.body;
+    
+    if (!sheetUrl || !row || !column || value === undefined) {
+      return res.status(400).json({ error: 'Missing required fields' });
+    }
+
+    // Extract sheet ID from URL
+    const sheetIdMatch = sheetUrl.match(/\/spreadsheets\/d\/([a-zA-Z0-9-_]+)/);
+    if (!sheetIdMatch) {
+      return res.status(400).json({ error: 'Invalid Google Sheets URL' });
+    }
+
+    const sheetId = sheetIdMatch[1];
+    const accessToken = await getValidAccessToken();
+
+    // Update the specific cell
+    const cellRange = `Sheet1!${column}${row}`;
+    const response = await fetch(
+      `https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values/${cellRange}?valueInputOption=RAW`,
+      {
+        method: 'PUT',
+        headers: {
+          'Authorization': `Bearer ${accessToken}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          values: [[value]]
+        })
+      }
+    );
+
+    if (!response.ok) {
+      const errorData = await response.json();
+      console.error('Google Sheets API error:', errorData);
+      return res.status(500).json({ error: 'Failed to update sheet' });
+    }
+
+    res.json({ success: true, message: 'Cell updated successfully' });
+  } catch (error) {
+    console.error('Error updating sheet cell:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
 // Error handler
 app.use((error, req, res, next) => {
   console.error('Unhandled error:', error);

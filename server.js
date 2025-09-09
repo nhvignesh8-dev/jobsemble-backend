@@ -697,7 +697,7 @@ app.post('/api/proxy/tavily/search', authenticateToken, apiRateLimit, async (req
 // SERP API Search Proxy
 app.post('/api/proxy/serp/search', authenticateToken, apiRateLimit, async (req, res) => {
   try {
-    const { query, engine = 'google', num = 50, timeFilter } = req.body;
+    const { query, engine = 'google', num = 100, timeFilter } = req.body;
     
     if (!query) {
       return res.status(400).json({ error: 'Search query required' });
@@ -1205,8 +1205,8 @@ app.post('/api/proxy/search-jobs', authenticateToken, apiRateLimit, async (req, 
   try {
     const { query, location, jobBoard, provider, timeFilter } = req.body;
     
-    if (!query || !location || !jobBoard || !provider) {
-      return res.status(400).json({ error: 'Missing required fields (query, location, jobBoard, provider)' });
+    if (!query || !jobBoard || !provider) {
+      return res.status(400).json({ error: 'Missing required fields (query, jobBoard, provider)' });
     }
 
     // Validate provider
@@ -1431,7 +1431,7 @@ app.post('/api/proxy/search-jobs', authenticateToken, apiRateLimit, async (req, 
         api_key: apiKey,
         engine: 'google',
         q: jobBoardQuery,
-        num: '50'
+        num: '100'
       });
 
       if (timeFilter && timeFilter !== 'anytime') {

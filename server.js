@@ -372,8 +372,8 @@ async function scrapeViaGoogleSearch(boardId, jobTitle, location, retryCount = 0
         '--disable-features=TranslateUI',
         '--disable-ipc-flooding-protection',
         '--window-size=1920,1080',
-        '--user-data-dir=/tmp/chrome-user-data',
-        '--remote-debugging-port=9222'
+        `--user-data-dir=/tmp/chrome-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+        `--remote-debugging-port=${9222 + Math.floor(Math.random() * 1000)}`
       ]
         });
       }

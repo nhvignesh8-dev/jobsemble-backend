@@ -1,7 +1,7 @@
 # Use Alpine Linux with Node.js for smaller image and better container compatibility  
 FROM node:18-alpine
 
-# Install Chromium and dependencies
+# Install Chromium and dependencies with container optimizations
 RUN apk add --no-cache \
     chromium \
     nss \
@@ -10,7 +10,12 @@ RUN apk add --no-cache \
     harfbuzz \
     ca-certificates \
     ttf-freefont \
-    && rm -rf /var/cache/apk/*
+    dbus \
+    && rm -rf /var/cache/apk/* \
+    && mkdir -p /tmp \
+    && chmod 1777 /tmp \
+    && addgroup -g 1001 -S pptruser \
+    && adduser -S -D -H -u 1001 -s /sbin/nologin -G pptruser pptruser
 
 # Create app directory
 WORKDIR /workspace

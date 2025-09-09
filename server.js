@@ -346,7 +346,7 @@ async function scrapeViaGoogleSearch(boardId, jobTitle, location, retryCount = 0
         browser = await puppeteer.launch({
           headless: "new",
           executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || '/usr/bin/chromium-browser',
-          protocolTimeout: 60000, // 60 seconds timeout for cloud environments
+          protocolTimeout: 180000, // 180 seconds timeout for cloud environments
       ignoreDefaultArgs: ['--disable-extensions'],
       args: [
         '--no-sandbox',

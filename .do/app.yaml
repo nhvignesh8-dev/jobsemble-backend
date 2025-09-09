@@ -1,20 +1,33 @@
-name: jobsemble-backend
+name: jobsemble-secure-proxy
 services:
-- name: web
-  dockerfile_path: Dockerfile
+- name: secure-api
   source_dir: /
   github:
     repo: nhvignesh8-dev/jobsemble-backend
     branch: main
-  http_port: 3001
+  run_command: node server.js
+  environment_slug: node-js
   instance_count: 1
-  instance_size_slug: basic-xxs
-  health_check:
-    http_path: /api/health
+  instance_size_slug: basic-xxs  # $5/month tier
+  http_port: 3001
   routes:
   - path: /
   envs:
   - key: NODE_ENV
     value: production
   - key: PORT
-    value: "3001"
+    value: "8080"
+  - key: JWT_SECRET
+    type: SECRET
+    value: your-jwt-secret-here
+  - key: ENCRYPTION_KEY
+    type: SECRET
+    value: your-encryption-key-here
+  - key: VITE_APPWRITE_ENDPOINT
+    value: https://nyc.cloud.appwrite.io/v1
+  - key: VITE_APPWRITE_PROJECT_ID
+    value: 675ee8990006eeb37b46
+  - key: VITE_APPWRITE_DATABASE_ID
+    value: 675ee8dc001f5e56f1c3
+  - key: VITE_APPWRITE_COLLECTION_ID
+    value: 675ee9160007b2c86a44

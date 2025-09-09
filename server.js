@@ -255,36 +255,34 @@ async function scrapeViaGoogleSearch(boardId, jobTitle, location, retryCount = 0
     // Launch browser with maximum stealth and cloud compatibility
     let browser = await puppeteer.launch({
       headless: "new", // Use new headless mode
-      // Let Puppeteer find Chrome automatically in Docker
-      executablePath: process.env.PUPPETEER_EXECUTABLE_PATH,
+      executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || '/usr/bin/google-chrome-stable',
       ignoreDefaultArgs: ['--disable-extensions'],
       args: [
         '--no-sandbox',
         '--disable-setuid-sandbox',
         '--disable-dev-shm-usage',
+        '--disable-gpu',
         '--disable-web-security',
         '--disable-features=VizDisplayCompositor',
-        '--disable-accelerated-2d-canvas',
-        '--disable-gpu',
-        '--disable-background-timer-throttling',
-        '--disable-backgrounding-occluded-windows',
-        '--disable-renderer-backgrounding',
-        '--single-process', // This might help with missing libraries
-        '--disable-blink-features=AutomationControlled',
         '--disable-extensions',
         '--no-first-run',
         '--disable-default-apps',
         '--disable-sync',
         '--disable-translate',
         '--disable-background-timer-throttling',
-        '--no-zygote', // Disable zygote process
-        '--disable-ipc-flooding-protection',
-        '--force-color-profile=srgb',
-        '--disable-background-networking',
         '--disable-backgrounding-occluded-windows',
         '--disable-renderer-backgrounding',
+        '--disable-blink-features=AutomationControlled',
+        '--no-zygote',
+        '--single-process',
         '--disable-ipc-flooding-protection',
-        '--window-size=1366,768'
+        '--disable-background-networking',
+        '--disable-software-rasterizer',
+        '--disable-features=TranslateUI',
+        '--disable-ipc-flooding-protection',
+        '--window-size=1920,1080',
+        '--user-data-dir=/tmp/chrome-user-data',
+        '--remote-debugging-port=9222'
       ]
     });
 

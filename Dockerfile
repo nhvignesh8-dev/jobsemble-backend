@@ -1,26 +1,30 @@
-# Use an image that already has Chrome installed
-FROM ghcr.io/puppeteer/puppeteer:21.5.2
+# Use Ubuntu base with Node.js and install Chrome manually
+FROM node:18-slim
 
-# Create and set ownership of workspace directory as root
-USER root
-RUN mkdir -p /workspace && chown -R pptruser:pptruser /workspace
+# Install Chrome dependencies and Chrome itself
+RUN apt-get update \
+    && apt-get install -y wget gnupg \
+    && wget -q -O - https://dl-ssl.google.com/linux/linux_signing_key.pub | apt-key add - \
+    && sh -c 'echo "deb [arch=amd64] http://dl.google.com/linux/chrome/deb/ stable main" >> /etc/apt/sources.list.d/google.list' \
+    && apt-get update \
+    && apt-get install -y google-chrome-stable fonts-ipafont-gothic fonts-wqy-zenhei fonts-thai-tlwg fonts-kacst fonts-freefont-ttf libxss1 \
+      --no-install-recommends \
+    && rm -rf /var/lib/apt/lists/*
 
-# Set working directory and switch to pptruser
+# Create app directory
 WORKDIR /workspace
-USER pptruser
 
-# Copy package files first for better caching
-COPY --chown=pptruser:pptruser package*.json ./
+# Copy package files
+COPY package*.json ./
 
-# Install Node.js dependencies
-# Skip Puppeteer download since it's already included in the image
-ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true
-# Let Puppeteer auto-detect Chrome in the Docker image
-# ENV PUPPETEER_EXECUTABLE_PATH=/usr/bin/google-chrome
+# Install dependencies (Puppeteer will download Chrome, but we'll use system Chrome)
 RUN npm install --only=production
 
 # Copy application code
-COPY --chown=pptruser:pptruser . .
+COPY . .
+
+# Set Chrome path for Puppeteer
+ENV PUPPETEER_EXECUTABLE_PATH=/usr/bin/google-chrome-stable
 
 # Expose port
 EXPOSE 3001

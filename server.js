@@ -252,10 +252,29 @@ async function scrapeViaGoogleSearch(boardId, jobTitle, location, retryCount = 0
     ];
     const randomUserAgent = userAgents[Math.floor(Math.random() * userAgents.length)];
 
-    // Launch browser with maximum stealth and cloud compatibility
-    let browser = await puppeteer.launch({
-      headless: "new", // Use new headless mode
-      executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || '/usr/bin/google-chrome-stable',
+    // Detect if we're in a cloud environment where Chrome might not work
+    const isCloudEnvironment = process.env.CLOUD_PROVIDER || process.env.NODE_ENV === 'production';
+    const cloudProvider = process.env.CLOUD_PROVIDER || 'unknown';
+    
+    let browser;
+    
+    // Try cloud-compatible Chrome first, fallback to local if needed
+    if (isCloudEnvironment) {
+      console.log(`🌐 Cloud environment detected (${cloudProvider}), attempting cloud-compatible Chrome...`);
+      
+      try {
+        // Try connecting to Browserless Chrome service or use remote Chrome
+        browser = await puppeteer.connect({
+          browserWSEndpoint: process.env.BROWSERLESS_WS_ENDPOINT || 'wss://chrome.browserless.io?token=YOUR_TOKEN'
+        });
+        console.log('✅ Connected to remote Chrome service');
+      } catch (remoteError) {
+        console.log('⚠️ Remote Chrome failed, trying local Chrome with cloud-optimized settings...');
+        
+        // Fallback to local Chrome with maximum compatibility settings
+        browser = await puppeteer.launch({
+          headless: "new",
+          executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || '/usr/bin/chromium-browser',
       ignoreDefaultArgs: ['--disable-extensions'],
       args: [
         '--no-sandbox',
@@ -284,7 +303,25 @@ async function scrapeViaGoogleSearch(boardId, jobTitle, location, retryCount = 0
         '--user-data-dir=/tmp/chrome-user-data',
         '--remote-debugging-port=9222'
       ]
-    });
+        });
+      }
+    } else {
+      // Local development environment
+      console.log('💻 Local environment detected, using local Chrome...');
+      browser = await puppeteer.launch({
+        headless: "new",
+        executablePath: process.env.PUPPETEER_EXECUTABLE_PATH,
+        ignoreDefaultArgs: ['--disable-extensions'],
+        args: [
+          '--no-sandbox',
+          '--disable-setuid-sandbox',
+          '--disable-dev-shm-usage',
+          '--disable-gpu',
+          '--disable-web-security',
+          '--window-size=1920,1080'
+        ]
+      });
+    }
 
     let page = await browser.newPage();
 

@@ -1,15 +1,16 @@
-# Use Ubuntu base with Node.js and install Chrome manually
-FROM node:18-slim
+# Use Alpine Linux with Node.js for smaller image and better container compatibility  
+FROM node:18-alpine
 
-# Install Chrome dependencies and Chrome itself
-RUN apt-get update \
-    && apt-get install -y wget gnupg \
-    && wget -q -O - https://dl-ssl.google.com/linux/linux_signing_key.pub | apt-key add - \
-    && sh -c 'echo "deb [arch=amd64] http://dl.google.com/linux/chrome/deb/ stable main" >> /etc/apt/sources.list.d/google.list' \
-    && apt-get update \
-    && apt-get install -y google-chrome-stable fonts-ipafont-gothic fonts-wqy-zenhei fonts-thai-tlwg fonts-kacst fonts-freefont-ttf libxss1 \
-      --no-install-recommends \
-    && rm -rf /var/lib/apt/lists/*
+# Install Chromium and dependencies
+RUN apk add --no-cache \
+    chromium \
+    nss \
+    freetype \
+    freetype-dev \
+    harfbuzz \
+    ca-certificates \
+    ttf-freefont \
+    && rm -rf /var/cache/apk/*
 
 # Create app directory
 WORKDIR /workspace
@@ -17,14 +18,15 @@ WORKDIR /workspace
 # Copy package files
 COPY package*.json ./
 
-# Install dependencies (Puppeteer will download Chrome, but we'll use system Chrome)
+# Install dependencies
 RUN npm install --only=production
 
 # Copy application code
 COPY . .
 
-# Set Chrome path for Puppeteer
-ENV PUPPETEER_EXECUTABLE_PATH=/usr/bin/google-chrome-stable
+# Set Chromium path for Puppeteer
+ENV PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium-browser
+ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true
 
 # Expose port
 EXPOSE 3001

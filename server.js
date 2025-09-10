@@ -1542,9 +1542,9 @@ app.post('/api/proxy/search-jobs', authenticateToken, apiRateLimit, async (req, 
       });
 
     } else if (provider === 'serp') {
-      // SERP API search with pagination to get more results
+      // SERP API search with pagination to get maximum results
       let allOrganicResults = [];
-      const maxPages = 5; // Get up to 5 pages (50 results)
+      const maxPages = 50; // Get up to 50 pages (500 results) - Google's typical limit
       const resultsPerPage = 10; // Google typically returns 10 per page
       
       for (let page = 0; page < maxPages; page++) {
@@ -1597,8 +1597,13 @@ app.post('/api/proxy/search-jobs', authenticateToken, apiRateLimit, async (req, 
             break;
           }
           
+          // Progress tracking
+          if ((page + 1) % 10 === 0) {
+            console.log(`📊 [SERP DEBUG] Progress: ${page + 1}/${maxPages} pages, ${allOrganicResults.length} total results`);
+          }
+          
           // Small delay between requests to be respectful to the API
-          await new Promise(resolve => setTimeout(resolve, 100));
+          await new Promise(resolve => setTimeout(resolve, 200));
           
         } catch (pageError) {
           console.error(`❌ [SERP DEBUG] Error fetching page ${page + 1}:`, pageError.message);

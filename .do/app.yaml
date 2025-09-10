@@ -19,10 +19,10 @@ services:
     value: "8080"
   - key: JWT_SECRET
     type: SECRET
-    value: your-jwt-secret-here
+    value: 7c282563797bd657d5166be5ec9352b8685a3c6834d8a51f275711dfe090ffceddfdc20d81c872c9b7e30513ad7e7db9908b2f1c02215ea36445a030e29094ff
   - key: ENCRYPTION_KEY
     type: SECRET
-    value: your-encryption-key-here
+    value: 273acf7e77ff41170c3d816c40ebcf6b7b94b1e4691aca18e23175e0e082f03c
   - key: VITE_APPWRITE_ENDPOINT
     value: https://nyc.cloud.appwrite.io/v1
   - key: VITE_APPWRITE_PROJECT_ID
@@ -31,6 +31,3 @@ services:
     value: 675ee8dc001f5e56f1c3
   - key: VITE_APPWRITE_COLLECTION_ID
     value: 675ee9160007b2c86a44
-  - key: GOOGLE_ACCESS_TOKEN
-    type: SECRET
-    value: your-google-access-token-here

@@ -29,9 +29,21 @@ const PORT = process.env.PORT || 3001;
 app.set('trust proxy', 1);
 
 // Security Configuration
-const JWT_SECRET = process.env.JWT_SECRET || crypto.randomBytes(64).toString('hex');
-// Use a consistent encryption key to avoid decryption issues
-const ENCRYPTION_KEY = process.env.ENCRYPTION_KEY || Buffer.from('12345678901234567890123456789012', 'utf8');
+const JWT_SECRET = process.env.JWT_SECRET;
+if (!JWT_SECRET) {
+  console.error('❌ JWT_SECRET environment variable is required for production security');
+  process.exit(1);
+}
+
+// SECURITY: No hardcoded fallback - must be set in production environment
+const ENCRYPTION_KEY = process.env.ENCRYPTION_KEY;
+if (!ENCRYPTION_KEY) {
+  console.error('❌ ENCRYPTION_KEY environment variable is required for production security');
+  process.exit(1);
+}
+
+// Convert hex string to buffer for encryption operations
+const ENCRYPTION_KEY_BUFFER = Buffer.from(ENCRYPTION_KEY, 'hex');
 
 // System API Keys for freemium users - stored encrypted in database
 // Create a system user profile to store encrypted system API keys
@@ -127,7 +139,7 @@ function encrypt(text) {
   if (!text) return '';
   
   const iv = crypto.randomBytes(16);
-  const cipher = crypto.createCipheriv('aes-256-cbc', ENCRYPTION_KEY, iv);
+  const cipher = crypto.createCipheriv('aes-256-cbc', ENCRYPTION_KEY_BUFFER, iv);
   let encrypted = cipher.update(text, 'utf8', 'hex');
   encrypted += cipher.final('hex');
   
@@ -139,7 +151,7 @@ function decrypt(encryptedText) {
   
   const [ivHex, encrypted] = encryptedText.split(':');
   const iv = Buffer.from(ivHex, 'hex');
-  const decipher = crypto.createDecipheriv('aes-256-cbc', ENCRYPTION_KEY, iv);
+  const decipher = crypto.createDecipheriv('aes-256-cbc', ENCRYPTION_KEY_BUFFER, iv);
   let decrypted = decipher.update(encrypted, 'hex', 'utf8');
   decrypted += decipher.final('utf8');
   

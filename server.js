@@ -480,16 +480,16 @@ app.delete('/api/keys/:provider', authenticateToken, async (req, res) => {
 // System API key now properly encrypted with consistent encryption key
 // Decryption issues resolved - temporary restore endpoint removed
 
-// Export jobs to Google Sheets using secured OAuth token
+// Export jobs to Google Sheets - BACKEND ONLY HANDLES AUTH, FRONTEND PROCESSES DATA
 app.post('/api/export-to-sheets', authenticateToken, async (req, res) => {
   try {
-    const { sheetUrl, jobs } = req.body;
+    const { sheetUrl, processedData } = req.body;
     
-    if (!sheetUrl || !jobs || !Array.isArray(jobs)) {
-      return res.status(400).json({ error: 'Sheet URL and jobs array are required' });
+    if (!sheetUrl || !processedData || !Array.isArray(processedData)) {
+      return res.status(400).json({ error: 'Sheet URL and processed data are required' });
     }
 
-    console.log(`📊 Export request: ${jobs.length} jobs to Google Sheets`);
+    console.log(`📊 Export request: ${processedData.length} processed rows to Google Sheets`);
 
     // Get Google Sheets authentication headers
     const authHeaders = await getGoogleSheetsAuthHeaders();
@@ -501,18 +501,7 @@ app.post('/api/export-to-sheets', authenticateToken, async (req, res) => {
     }
     const sheetId = sheetIdMatch[1];
 
-    // Prepare job data for export
-    const headers = ['Job Title', 'Company', 'Location', 'Job URL', 'Application Status', 'Date Posted'];
-    const jobRows = jobs.map(job => [
-      job.title || '',
-      job.company || '',
-      job.location || '',
-      job.url || '',
-      job.applicationStatus || 'Not Applied',
-      job.datePosted || ''
-    ]);
-
-    // Check if sheet has data and append appropriately
+    // Check if sheet has data to determine if we need headers
     const existingDataResponse = await fetch(
       `https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values/Sheet1!A1:Z1000`,
       {
@@ -528,15 +517,18 @@ app.post('/api/export-to-sheets', authenticateToken, async (req, res) => {
       }
     }
 
-    // Prepare data to append
-    const dataToAppend = shouldAddHeaders ? [headers, ...jobRows] : jobRows;
+    // Prepare data to append (frontend already processed this)
+    const dataToAppend = shouldAddHeaders ? processedData : processedData.slice(1); // Skip header row if headers exist
 
     // Append data to the sheet
     const appendResponse = await fetch(
       `https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values/Sheet1!A1:append?valueInputOption=USER_ENTERED`,
       {
         method: 'POST',
-        headers: authHeaders,
+        headers: {
+          ...authHeaders,
+          'Content-Type': 'application/json'
+        },
         body: JSON.stringify({
           values: dataToAppend
         })
@@ -545,27 +537,21 @@ app.post('/api/export-to-sheets', authenticateToken, async (req, res) => {
 
     if (!appendResponse.ok) {
       const errorText = await appendResponse.text();
-      console.error('❌ Failed to append data:', appendResponse.status, errorText);
-      
-      let errorMessage = `Failed to export to sheet (${appendResponse.status})`;
-      if (appendResponse.status === 403) {
-        errorMessage = 'Access denied. Please ensure your sheet is set to "Anyone with the link can edit".';
-      } else if (appendResponse.status === 404) {
-        errorMessage = 'Sheet not found. Please check the URL is correct.';
-      }
-
-      return res.status(appendResponse.status).json({
-        success: false,
-        error: errorMessage
+      console.error('❌ Google Sheets append error:', errorText);
+      return res.status(500).json({ 
+        success: false, 
+        error: 'Failed to append data to Google Sheets',
+        details: errorText
       });
     }
 
-    console.log(`✅ Successfully exported ${jobs.length} jobs to Google Sheets`);
+    const appendResult = await appendResponse.json();
+    console.log(`✅ Successfully exported ${dataToAppend.length} rows to Google Sheets`);
 
     res.json({
       success: true,
-      exportedCount: jobs.length,
-      message: `${jobs.length} jobs exported successfully`
+      exportedCount: dataToAppend.length,
+      message: `${dataToAppend.length} rows exported to Google Sheets successfully!`
     });
 
   } catch (error) {
@@ -2263,48 +2249,14 @@ app.post('/api/save-filter', authenticateToken, async (req, res) => {
       }
     }
 
-    // Get existing filters
-    const filtersResponse = await fetch(
-      `https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values/Filters!A1:Z1000`,
-      {
-        headers: authHeaders
-      }
-    );
-
-    let existingFilters = [];
-    if (filtersResponse.ok) {
-      const filtersData = await filtersResponse.json();
-      if (filtersData.values && filtersData.values.length > 0) {
-        // Skip header row
-        existingFilters = filtersData.values.slice(1).map(row => ({
-          id: row[0],
-          name: row[1],
-          locations: row[2] || '',
-          applicationStatuses: row[3] || '',
-          jobTitleKeywords: row[4] || ''
-        }));
-      }
-    }
-
-    // Remove existing filter with same ID
-    const filteredFilters = existingFilters.filter(f => f.id !== filter.id);
-    
-    // Add new filter
-    const newFilters = [...filteredFilters, filter];
-    
-    // Prepare data for writing
-    const filterData = [
-      ['ID', 'Name', 'Locations', 'ApplicationStatuses', 'JobTitleKeywords'], // Headers
-      ...newFilters.map(f => [f.id, f.name, f.locations, f.applicationStatuses, f.jobTitleKeywords])
-    ];
-
-    // Write filters to sheet
+    // Frontend should handle data processing - backend only provides auth
+    // Write processed filter data to sheet
     const writeResponse = await fetch(
       `https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values/Filters!A1:Z1000?valueInputOption=RAW`,
       {
         method: 'PUT',
         headers: authHeaders,
-        body: JSON.stringify({ values: filterData })
+        body: JSON.stringify({ values: filter.processedData })
       }
     );
 
@@ -2343,24 +2295,14 @@ app.post('/api/load-filters', authenticateToken, async (req, res) => {
     );
 
     if (!filtersResponse.ok) {
-      return res.json({ success: true, jobs: [] }); // Return empty if no Filters sheet
+      return res.json({ success: true, rawData: [] }); // Return empty if no Filters sheet
     }
 
     const filtersData = await filtersResponse.json();
-    if (!filtersData.values || filtersData.values.length <= 1) {
-      return res.json({ success: true, jobs: [] }); // No filters found
-    }
+    const rawData = filtersData.values || [];
 
-    // Parse filters (skip header row)
-    const filters = filtersData.values.slice(1).map(row => ({
-      id: row[0],
-      name: row[1],
-      locations: row[2] || '',
-      applicationStatuses: row[3] || '',
-      jobTitleKeywords: row[4] || ''
-    }));
-
-    res.json({ success: true, filters: filters });
+    // Return raw data only - let frontend handle processing
+    res.json({ success: true, rawData });
   } catch (error) {
     console.error('Error loading filters:', error);
     res.status(500).json({ error: 'Internal server error' });
@@ -2426,39 +2368,14 @@ app.post('/api/delete-filter', authenticateToken, async (req, res) => {
     const sheetId = sheetIdMatch[1];
     const authHeaders = await getGoogleSheetsAuthHeaders();
 
-    // Get existing filters
-    const filtersResponse = await fetch(
-      `https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values/Filters!A1:Z1000`,
-      {
-        headers: authHeaders
-      }
-    );
-
-    if (!filtersResponse.ok) {
-      return res.status(500).json({ error: 'Failed to access Filters sheet' });
-    }
-
-    const filtersData = await filtersResponse.json();
-    if (!filtersData.values || filtersData.values.length <= 1) {
-      return res.json({ success: true, message: 'No filters to delete' });
-    }
-
-    // Filter out the deleted filter
-    const remainingFilters = filtersData.values.slice(1).filter(row => row[0] !== filterId);
-    
-    // Prepare data for writing
-    const filterData = [
-      ['ID', 'Name', 'Locations', 'ApplicationStatuses', 'JobTitleKeywords'], // Headers
-      ...remainingFilters
-    ];
-
-    // Write updated filters to sheet
+    // Frontend should handle data processing - backend only provides auth
+    // Write processed filter data to sheet
     const writeResponse = await fetch(
       `https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values/Filters!A1:Z1000?valueInputOption=RAW`,
       {
         method: 'PUT',
         headers: authHeaders,
-        body: JSON.stringify({ values: filterData })
+        body: JSON.stringify({ values: filterId.processedData })
       }
     );
 

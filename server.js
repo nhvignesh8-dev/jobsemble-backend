@@ -216,9 +216,17 @@ const globalRateLimit = rateLimit({
 
 const apiRateLimit = rateLimit({
   windowMs: 60 * 1000, // 1 minute
-  max: 20, // Limit each user to 20 API calls per minute
+  max: 100, // Increased to 100 API calls per minute (supports pagination)
   keyGenerator: (req) => req.user?.userId || req.ip,
   message: { error: 'API rate limit exceeded' }
+});
+
+// Special rate limit for job search (more lenient due to pagination)
+const jobSearchRateLimit = rateLimit({
+  windowMs: 5 * 60 * 1000, // 5 minutes
+  max: 10, // Allow 10 job searches per 5 minutes per user
+  keyGenerator: (req) => req.user?.userId || req.ip,
+  message: { error: 'Job search rate limit exceeded. Please wait before searching again.' }
 });
 
 app.use(globalRateLimit);
@@ -1308,7 +1316,7 @@ app.get('/api/usage/:provider', authenticateToken, async (req, res) => {
 });
 
 // Job Search Proxy - handles individual job board searches
-app.post('/api/proxy/search-jobs', authenticateToken, apiRateLimit, async (req, res) => {
+app.post('/api/proxy/search-jobs', authenticateToken, jobSearchRateLimit, async (req, res) => {
   try {
     const { query, location, jobBoard, provider, timeFilter } = req.body;
     
@@ -1542,9 +1550,9 @@ app.post('/api/proxy/search-jobs', authenticateToken, apiRateLimit, async (req, 
       });
 
     } else if (provider === 'serp') {
-      // SERP API search with pagination to get maximum results
+      // SERP API search with pagination to get 100 results
       let allOrganicResults = [];
-      const maxPages = 50; // Get up to 50 pages (500 results) - Google's typical limit
+      const maxPages = 10; // Get up to 10 pages (100 results) - optimized for concurrency
       const resultsPerPage = 10; // Google typically returns 10 per page
       
       for (let page = 0; page < maxPages; page++) {
@@ -1598,12 +1606,12 @@ app.post('/api/proxy/search-jobs', authenticateToken, apiRateLimit, async (req, 
           }
           
           // Progress tracking
-          if ((page + 1) % 10 === 0) {
+          if ((page + 1) % 5 === 0) {
             console.log(`📊 [SERP DEBUG] Progress: ${page + 1}/${maxPages} pages, ${allOrganicResults.length} total results`);
           }
           
           // Small delay between requests to be respectful to the API
-          await new Promise(resolve => setTimeout(resolve, 200));
+          await new Promise(resolve => setTimeout(resolve, 100));
           
         } catch (pageError) {
           console.error(`❌ [SERP DEBUG] Error fetching page ${page + 1}:`, pageError.message);

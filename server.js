@@ -1817,6 +1817,241 @@ app.post('/api/update-sheet-cell', authenticateToken, async (req, res) => {
   }
 });
 
+// Filter Management Endpoints
+app.post('/api/save-filter', authenticateToken, async (req, res) => {
+  try {
+    const { sheetUrl, filter } = req.body;
+    
+    if (!sheetUrl || !filter) {
+      return res.status(400).json({ error: 'Missing required fields' });
+    }
+
+    // Extract sheet ID from URL
+    const sheetIdMatch = sheetUrl.match(/\/spreadsheets\/d\/([a-zA-Z0-9-_]+)/);
+    if (!sheetIdMatch) {
+      return res.status(400).json({ error: 'Invalid Google Sheets URL' });
+    }
+
+    const sheetId = sheetIdMatch[1];
+    const accessToken = await getValidAccessToken();
+
+    // Check if "Filters" sheet exists, create if not
+    const sheetsResponse = await fetch(
+      `https://sheets.googleapis.com/v4/spreadsheets/${sheetId}?fields=sheets.properties.title`,
+      {
+        headers: { 'Authorization': `Bearer ${accessToken}` }
+      }
+    );
+
+    if (!sheetsResponse.ok) {
+      return res.status(500).json({ error: 'Failed to access sheet' });
+    }
+
+    const sheetsData = await sheetsResponse.json();
+    const hasFiltersSheet = sheetsData.sheets?.some(sheet => sheet.properties.title === 'Filters');
+
+    if (!hasFiltersSheet) {
+      // Create "Filters" sheet
+      const createSheetResponse = await fetch(
+        `https://sheets.googleapis.com/v4/spreadsheets/${sheetId}:batchUpdate`,
+        {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${accessToken}`,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            requests: [{
+              addSheet: {
+                properties: {
+                  title: 'Filters',
+                  gridProperties: { rowCount: 1000, columnCount: 10 }
+                }
+              }
+            }]
+          })
+        }
+      );
+
+      if (!createSheetResponse.ok) {
+        return res.status(500).json({ error: 'Failed to create Filters sheet' });
+      }
+    }
+
+    // Get existing filters
+    const filtersResponse = await fetch(
+      `https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values/Filters!A1:Z1000`,
+      {
+        headers: { 'Authorization': `Bearer ${accessToken}` }
+      }
+    );
+
+    let existingFilters = [];
+    if (filtersResponse.ok) {
+      const filtersData = await filtersResponse.json();
+      if (filtersData.values && filtersData.values.length > 0) {
+        // Skip header row
+        existingFilters = filtersData.values.slice(1).map(row => ({
+          id: row[0],
+          name: row[1],
+          location: row[2],
+          roles: row[3] ? JSON.parse(row[3]) : []
+        }));
+      }
+    }
+
+    // Remove existing filter with same ID
+    const filteredFilters = existingFilters.filter(f => f.id !== filter.id);
+    
+    // Add new filter
+    const newFilters = [...filteredFilters, filter];
+    
+    // Prepare data for writing
+    const filterData = [
+      ['ID', 'Name', 'Location', 'Roles'], // Headers
+      ...newFilters.map(f => [f.id, f.name, f.location, JSON.stringify(f.roles)])
+    ];
+
+    // Write filters to sheet
+    const writeResponse = await fetch(
+      `https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values/Filters!A1:Z1000?valueInputOption=RAW`,
+      {
+        method: 'PUT',
+        headers: {
+          'Authorization': `Bearer ${accessToken}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ values: filterData })
+      }
+    );
+
+    if (!writeResponse.ok) {
+      return res.status(500).json({ error: 'Failed to save filter' });
+    }
+
+    res.json({ success: true, message: 'Filter saved successfully' });
+  } catch (error) {
+    console.error('Error saving filter:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+app.post('/api/load-filters', authenticateToken, async (req, res) => {
+  try {
+    const { sheetUrl } = req.body;
+    
+    if (!sheetUrl) {
+      return res.status(400).json({ error: 'Missing sheet URL' });
+    }
+
+    // Extract sheet ID from URL
+    const sheetIdMatch = sheetUrl.match(/\/spreadsheets\/d\/([a-zA-Z0-9-_]+)/);
+    if (!sheetIdMatch) {
+      return res.status(400).json({ error: 'Invalid Google Sheets URL' });
+    }
+
+    const sheetId = sheetIdMatch[1];
+    const accessToken = await getValidAccessToken();
+
+    // Try to read filters from "Filters" sheet
+    const filtersResponse = await fetch(
+      `https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values/Filters!A1:Z1000`,
+      {
+        headers: { 'Authorization': `Bearer ${accessToken}` }
+      }
+    );
+
+    if (!filtersResponse.ok) {
+      return res.json({ success: true, jobs: [] }); // Return empty if no Filters sheet
+    }
+
+    const filtersData = await filtersResponse.json();
+    if (!filtersData.values || filtersData.values.length <= 1) {
+      return res.json({ success: true, jobs: [] }); // No filters found
+    }
+
+    // Parse filters (skip header row)
+    const filters = filtersData.values.slice(1).map(row => ({
+      id: row[0],
+      name: row[1],
+      location: row[2],
+      roles: row[3] ? JSON.parse(row[3]) : []
+    }));
+
+    res.json({ success: true, jobs: filters });
+  } catch (error) {
+    console.error('Error loading filters:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+app.post('/api/delete-filter', authenticateToken, async (req, res) => {
+  try {
+    const { sheetUrl, filterId } = req.body;
+    
+    if (!sheetUrl || !filterId) {
+      return res.status(400).json({ error: 'Missing required fields' });
+    }
+
+    // Extract sheet ID from URL
+    const sheetIdMatch = sheetUrl.match(/\/spreadsheets\/d\/([a-zA-Z0-9-_]+)/);
+    if (!sheetIdMatch) {
+      return res.status(400).json({ error: 'Invalid Google Sheets URL' });
+    }
+
+    const sheetId = sheetIdMatch[1];
+    const accessToken = await getValidAccessToken();
+
+    // Get existing filters
+    const filtersResponse = await fetch(
+      `https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values/Filters!A1:Z1000`,
+      {
+        headers: { 'Authorization': `Bearer ${accessToken}` }
+      }
+    );
+
+    if (!filtersResponse.ok) {
+      return res.status(500).json({ error: 'Failed to access Filters sheet' });
+    }
+
+    const filtersData = await filtersResponse.json();
+    if (!filtersData.values || filtersData.values.length <= 1) {
+      return res.json({ success: true, message: 'No filters to delete' });
+    }
+
+    // Filter out the deleted filter
+    const remainingFilters = filtersData.values.slice(1).filter(row => row[0] !== filterId);
+    
+    // Prepare data for writing
+    const filterData = [
+      ['ID', 'Name', 'Location', 'Roles'], // Headers
+      ...remainingFilters
+    ];
+
+    // Write updated filters to sheet
+    const writeResponse = await fetch(
+      `https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values/Filters!A1:Z1000?valueInputOption=RAW`,
+      {
+        method: 'PUT',
+        headers: {
+          'Authorization': `Bearer ${accessToken}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ values: filterData })
+      }
+    );
+
+    if (!writeResponse.ok) {
+      return res.status(500).json({ error: 'Failed to delete filter' });
+    }
+
+    res.json({ success: true, message: 'Filter deleted successfully' });
+  } catch (error) {
+    console.error('Error deleting filter:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
 // Error handler
 app.use((error, req, res, next) => {
   console.error('Unhandled error:', error);

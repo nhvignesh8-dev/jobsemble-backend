@@ -502,15 +502,14 @@ app.post('/api/export-to-sheets', authenticateToken, async (req, res) => {
     const sheetId = sheetIdMatch[1];
 
     // Prepare job data for export
-    const headers = ['Job Title', 'Company', 'Location', 'Date Posted', 'Job URL', 'Description', 'Application Status'];
+    const headers = ['Job Title', 'Company', 'Location', 'Job URL', 'Application Status', 'Date Posted'];
     const jobRows = jobs.map(job => [
       job.title || '',
       job.company || '',
       job.location || '',
-      job.datePosted || '',
       job.url || '',
-      job.description ? job.description.substring(0, 200) + '...' : '',
-      job.applicationStatus || 'Not Applied'
+      job.applicationStatus || 'Not Applied',
+      job.datePosted || ''
     ]);
 
     // Check if sheet has data and append appropriately

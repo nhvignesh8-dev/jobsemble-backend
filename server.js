@@ -44,16 +44,61 @@ if (!ENCRYPTION_KEY) {
 
 // Convert hex string to buffer for encryption operations
 
-// Normalize encryption key (strip spaces, ensure proper hex format)
-let normalizedKey = ENCRYPTION_KEY.replace(/\s+/g, '');
-if (normalizedKey.length !== 64) {
-  console.error(`❌ ENCRYPTION_KEY must be 64 hex characters (32 bytes). Current length: ${normalizedKey.length}`);
+// Normalize encryption key and support multiple secure formats
+let normalizedKey = (ENCRYPTION_KEY || '').trim();
+
+function derive32ByteKeyFromString(input) {
+  // Derive a 32-byte key deterministically using SHA-256
+  return crypto.createHash('sha256').update(input, 'utf8').digest();
+}
+
+let ENCRYPTION_KEY_BUFFER;
+try {
+  // Remove whitespace
+  const compact = normalizedKey.replace(/\s+/g, '');
+
+  if (/^[0-9a-fA-F]+$/.test(compact)) {
+    // HEX input
+    if (compact.length === 64) {
+      ENCRYPTION_KEY_BUFFER = Buffer.from(compact, 'hex');
+    } else if (compact.length === 128) {
+      // If 64-byte hex provided, hash down to 32 bytes
+      console.warn('⚠️ ENCRYPTION_KEY is 128 hex chars; deriving 32-byte key via SHA-256');
+      ENCRYPTION_KEY_BUFFER = crypto.createHash('sha256').update(Buffer.from(compact, 'hex')).digest();
+    } else {
+      console.error(`❌ ENCRYPTION_KEY hex length invalid: ${compact.length}. Expected 64 (32 bytes) or 128 (64 bytes).`);
+      process.exit(1);
+    }
+  } else {
+    // Try base64
+    try {
+      const b64 = Buffer.from(compact, 'base64');
+      if (b64.length === 32) {
+        ENCRYPTION_KEY_BUFFER = b64;
+      } else if (b64.length > 0) {
+        console.warn(`⚠️ ENCRYPTION_KEY base64 length ${b64.length} bytes; deriving 32-byte key via SHA-256`);
+        ENCRYPTION_KEY_BUFFER = crypto.createHash('sha256').update(b64).digest();
+      } else {
+        // Fallback: derive from utf8 string
+        ENCRYPTION_KEY_BUFFER = derive32ByteKeyFromString(compact);
+      }
+    } catch (_e) {
+      // Fallback: derive from utf8 string
+      console.warn('⚠️ ENCRYPTION_KEY not hex/base64; deriving 32-byte key via SHA-256 of provided value');
+      ENCRYPTION_KEY_BUFFER = derive32ByteKeyFromString(compact);
+    }
+  }
+} catch (e) {
+  console.error('❌ Failed to process ENCRYPTION_KEY:', e.message);
   process.exit(1);
 }
 
-// Convert hex string to buffer for encryption operations
-const ENCRYPTION_KEY_BUFFER = Buffer.from(normalizedKey, 'hex');
-console.log(`✅ ENCRYPTION_KEY validated: ${normalizedKey.length} chars, ${ENCRYPTION_KEY_BUFFER.length} bytes`);
+if (!ENCRYPTION_KEY_BUFFER || ENCRYPTION_KEY_BUFFER.length !== 32) {
+  console.error(`❌ ENCRYPTION_KEY_BUFFER invalid length: ${ENCRYPTION_KEY_BUFFER ? ENCRYPTION_KEY_BUFFER.length : 'none'}`);
+  process.exit(1);
+}
+
+console.log(`✅ ENCRYPTION_KEY ready: ${ENCRYPTION_KEY_BUFFER.length} bytes`);
 
 
 // System API Keys for freemium users - stored encrypted in database

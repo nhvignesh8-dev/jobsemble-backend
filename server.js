@@ -43,7 +43,18 @@ if (!ENCRYPTION_KEY) {
 }
 
 // Convert hex string to buffer for encryption operations
-const ENCRYPTION_KEY_BUFFER = Buffer.from(ENCRYPTION_KEY, 'hex');
+
+// Normalize encryption key (strip spaces, ensure proper hex format)
+let normalizedKey = ENCRYPTION_KEY.replace(/\s+/g, '');
+if (normalizedKey.length !== 64) {
+  console.error(`❌ ENCRYPTION_KEY must be 64 hex characters (32 bytes). Current length: ${normalizedKey.length}`);
+  process.exit(1);
+}
+
+// Convert hex string to buffer for encryption operations
+const ENCRYPTION_KEY_BUFFER = Buffer.from(normalizedKey, 'hex');
+console.log(`✅ ENCRYPTION_KEY validated: ${normalizedKey.length} chars, ${ENCRYPTION_KEY_BUFFER.length} bytes`);
+
 
 // System API Keys for freemium users - stored encrypted in database
 // Create a system user profile to store encrypted system API keys

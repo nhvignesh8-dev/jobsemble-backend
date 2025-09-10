@@ -491,8 +491,8 @@ app.post('/api/export-to-sheets', authenticateToken, async (req, res) => {
 
     console.log(`📊 Export request: ${jobs.length} jobs to Google Sheets`);
 
-    // Get encrypted Google OAuth token from system storage
-    const accessToken = await getValidAccessToken();
+    // Get Google Sheets authentication headers
+    const authHeaders = await getGoogleSheetsAuthHeaders();
     
     // Extract sheet ID from URL
     const sheetIdMatch = sheetUrl.match(/\/spreadsheets\/d\/([a-zA-Z0-9-_]+)/);
@@ -517,7 +517,7 @@ app.post('/api/export-to-sheets', authenticateToken, async (req, res) => {
     const existingDataResponse = await fetch(
       `https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values/Sheet1!A1:Z1000`,
       {
-        headers: { 'Authorization': authHeaders['Authorization'] }
+        headers: authHeaders
       }
     );
 
@@ -1235,7 +1235,7 @@ async function getServiceAccountAccessToken(serviceAccountJson) {
     console.log('✅ Service Account access token obtained');
     
     return {
-      'Authorization': authHeaders['Authorization'],
+      'Authorization': `Bearer ${accessToken}`,
       'Content-Type': 'application/json'
     };
     
@@ -2148,7 +2148,7 @@ app.post('/api/update-sheet-cell', authenticateToken, async (req, res) => {
     }
 
     const sheetId = sheetIdMatch[1];
-    const accessToken = await getValidAccessToken();
+    const authHeaders = await getGoogleSheetsAuthHeaders();
 
     // Update the specific cell
     const cellRange = `Sheet1!${column}${row}`;
@@ -2192,13 +2192,13 @@ app.post('/api/save-filter', authenticateToken, async (req, res) => {
     }
 
     const sheetId = sheetIdMatch[1];
-    const accessToken = await getValidAccessToken();
+    const authHeaders = await getGoogleSheetsAuthHeaders();
 
     // Check if "Filters" sheet exists, create if not
     const sheetsResponse = await fetch(
       `https://sheets.googleapis.com/v4/spreadsheets/${sheetId}?fields=sheets.properties.title`,
       {
-        headers: { 'Authorization': authHeaders['Authorization'] }
+        headers: authHeaders
       }
     );
 
@@ -2238,7 +2238,7 @@ app.post('/api/save-filter', authenticateToken, async (req, res) => {
     const filtersResponse = await fetch(
       `https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values/Filters!A1:Z1000`,
       {
-        headers: { 'Authorization': authHeaders['Authorization'] }
+        headers: authHeaders
       }
     );
 
@@ -2305,13 +2305,11 @@ app.post('/api/load-filters', authenticateToken, async (req, res) => {
     }
 
     const sheetId = sheetIdMatch[1];
-    const accessToken = await getValidAccessToken();
-
-    // Try to read filters from "Filters" sheet
+    const authHeaders = await getGoogleSheetsAuthHeaders();
     const filtersResponse = await fetch(
       `https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values/Filters!A1:Z1000`,
       {
-        headers: { 'Authorization': authHeaders['Authorization'] }
+        headers: authHeaders
       }
     );
 
@@ -2356,13 +2354,13 @@ app.post('/api/read-sheet', authenticateToken, async (req, res) => {
     }
 
     const sheetId = sheetIdMatch[1];
-    const accessToken = await getValidAccessToken();
+    const authHeaders = await getGoogleSheetsAuthHeaders();
 
     const effectiveRange = range && typeof range === 'string' && range.trim().length > 0 ? range : 'A:Z';
     const valuesResponse = await fetch(
       `https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values/${encodeURIComponent(effectiveRange)}`,
       {
-        headers: { 'Authorization': authHeaders['Authorization'] }
+        headers: authHeaders
       }
     );
 
@@ -2397,13 +2395,13 @@ app.post('/api/delete-filter', authenticateToken, async (req, res) => {
     }
 
     const sheetId = sheetIdMatch[1];
-    const accessToken = await getValidAccessToken();
+    const authHeaders = await getGoogleSheetsAuthHeaders();
 
     // Get existing filters
     const filtersResponse = await fetch(
       `https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values/Filters!A1:Z1000`,
       {
-        headers: { 'Authorization': authHeaders['Authorization'] }
+        headers: authHeaders
       }
     );
 

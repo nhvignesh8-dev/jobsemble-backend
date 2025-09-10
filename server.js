@@ -616,6 +616,7 @@ app.post('/api/system/google-oauth-token', authenticateToken, async (req, res) =
           ID.unique(),
           {
             userId: SYSTEM_USER_ID,
+            accountId: SYSTEM_USER_ID, // Add required accountId field
             apiKeys: JSON.stringify({
               systemTavilyApiKey: '',
               systemGoogleAccessToken: encryptedToken
@@ -2419,6 +2420,7 @@ async function bootstrapSystemGoogleTokenIfProvided() {
           ID.unique(),
           {
             userId: SYSTEM_USER_ID,
+            accountId: SYSTEM_USER_ID, // Add required accountId field
             apiKeys: JSON.stringify({
               systemTavilyApiKey: '',
               systemGoogleAccessToken: encryptedToken

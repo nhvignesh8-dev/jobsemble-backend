@@ -2211,6 +2211,48 @@ app.post('/api/load-filters', authenticateToken, async (req, res) => {
   }
 });
 
+// Generic read endpoint for Google Sheets used by the frontend to fetch rows
+app.post('/api/read-sheet', authenticateToken, async (req, res) => {
+  try {
+    const { sheetUrl, range } = req.body;
+
+    if (!sheetUrl) {
+      return res.status(400).json({ error: 'Missing sheet URL' });
+    }
+
+    // Extract sheet ID from URL
+    const sheetIdMatch = sheetUrl.match(/\/spreadsheets\/d\/([a-zA-Z0-9-_]+)/);
+    if (!sheetIdMatch) {
+      return res.status(400).json({ error: 'Invalid Google Sheets URL' });
+    }
+
+    const sheetId = sheetIdMatch[1];
+    const accessToken = await getValidAccessToken();
+
+    const effectiveRange = range && typeof range === 'string' && range.trim().length > 0 ? range : 'A:Z';
+    const valuesResponse = await fetch(
+      `https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values/${encodeURIComponent(effectiveRange)}`,
+      {
+        headers: { 'Authorization': `Bearer ${accessToken}` }
+      }
+    );
+
+    if (!valuesResponse.ok) {
+      const errBody = await valuesResponse.text().catch(() => '');
+      return res.status(500).json({ success: false, error: 'Failed to read sheet', details: errBody });
+    }
+
+    const valuesData = await valuesResponse.json();
+    const rawData = valuesData.values || [];
+
+    // Keep response shape aligned with frontend expectations
+    return res.json({ success: true, rawData, jobs: [] });
+  } catch (error) {
+    console.error('Error reading sheet:', error);
+    return res.status(500).json({ success: false, error: 'Internal server error' });
+  }
+});
+
 app.post('/api/delete-filter', authenticateToken, async (req, res) => {
   try {
     const { sheetUrl, filterId } = req.body;

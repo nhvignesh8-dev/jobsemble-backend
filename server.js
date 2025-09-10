@@ -72,19 +72,96 @@ function invalidateUserSession(userId, reason = 'New session created') {
   return null;
 }
 
-// Helper function to get valid Google OAuth access token
+// Helper function to get valid Google access token using service account
 async function getValidAccessToken(userId = null) {
-  // Use the same authentication method that works for reading
-  const systemGoogleToken = process.env.SYSTEM_GOOGLE_ACCESS_TOKEN || 
-                           process.env.VITE_APP_GOOGLE_ACCESS_TOKEN ||
-                           process.env.APP_GOOGLE_ACCESS_TOKEN;
-  
-  if (systemGoogleToken && systemGoogleToken !== 'placeholder-google-token') {
-    console.log('✅ Using system Google OAuth token');
-    return systemGoogleToken;
+  try {
+    // Try to get service account from database first
+    let serviceAccountKey = null;
+    
+    try {
+      console.log('🔍 Looking for Google Service Account in database...');
+      const systemDoc = await databases.getDocument(DATABASE_ID, COLLECTION_ID, '68c1d918601d5f9f7958');
+      
+      if (systemDoc.apiKeys) {
+        const apiKeys = JSON.parse(systemDoc.apiKeys);
+        if (apiKeys.googleServiceAccountKey) {
+          serviceAccountKey = apiKeys.googleServiceAccountKey;
+          console.log('✅ Found Google Service Account in database');
+        }
+      }
+    } catch (error) {
+      console.log('⚠️ Could not retrieve service account from database:', error.message);
+    }
+    
+    // Fallback to environment variable
+    if (!serviceAccountKey) {
+      serviceAccountKey = process.env.GOOGLE_SERVICE_ACCOUNT_KEY;
+      if (serviceAccountKey) {
+        console.log('🔐 Using Google Service Account from environment variable');
+      }
+    }
+    
+    if (serviceAccountKey) {
+      console.log('🔐 Using Google Service Account for authentication');
+      
+      const serviceAccount = JSON.parse(serviceAccountKey);
+      
+      // Create JWT assertion for service account
+      const now = Math.floor(Date.now() / 1000);
+      
+      const jwtPayload = {
+        iss: serviceAccount.client_email,
+        scope: 'https://www.googleapis.com/auth/spreadsheets',
+        aud: 'https://oauth2.googleapis.com/token',
+        exp: now + 3600,
+        iat: now
+      };
+      
+      // Sign JWT with service account private key
+      const jwtToken = jwt.sign(jwtPayload, serviceAccount.private_key, { 
+        algorithm: 'RS256',
+        header: {
+          kid: serviceAccount.private_key_id
+        }
+      });
+      
+      // Exchange JWT for access token
+      const response = await fetch('https://oauth2.googleapis.com/token', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded',
+        },
+        body: new URLSearchParams({
+          grant_type: 'urn:ietf:params:oauth:grant-type:jwt-bearer',
+          assertion: jwtToken
+        })
+      });
+      
+      if (response.ok) {
+        const data = await response.json();
+        console.log('✅ Service account token obtained, expires in:', data.expires_in);
+        return data.access_token;
+      } else {
+        const errorData = await response.text();
+        console.log('❌ Service account auth failed:', response.status, errorData);
+      }
+    }
+    
+    // Fallback to system environment token
+    const systemGoogleToken = process.env.SYSTEM_GOOGLE_ACCESS_TOKEN || 
+                             process.env.VITE_APP_GOOGLE_ACCESS_TOKEN ||
+                             process.env.APP_GOOGLE_ACCESS_TOKEN;
+    
+    if (systemGoogleToken && systemGoogleToken !== 'placeholder-google-token') {
+      console.log('✅ Using system Google OAuth token');
+      return systemGoogleToken;
+    }
+    
+  } catch (error) {
+    console.error('❌ Error with Google authentication:', error);
   }
   
-  console.warn('⚠️ No valid Google OAuth token found - using placeholder');
+  console.warn('⚠️ No valid Google access token found - using placeholder');
   return 'placeholder-google-token';
 }
 

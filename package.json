@@ -1,5 +1,5 @@
 {
-  "name": "jobsemble-secure-proxy",
+  "name": "jobsemble-scraper-backend",
   "version": "1.0.0",
   "description": "Secure backend proxy for API keys and vendor API calls",
   "main": "server.js",
@@ -20,7 +20,7 @@
     "jsonwebtoken": "^9.0.2"
   },
   "engines": {
-    "node": ">=18.0.0"
+    "node": "18.20.4"
   },
   "keywords": [
     "security",

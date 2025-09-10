@@ -1,5 +1,10 @@
 # Use Alpine Linux with Node.js for smaller image and better container compatibility  
-FROM node:18-alpine
+FROM node:18.20.4-alpine
+
+# Set npm configuration for better reliability
+RUN npm config set registry https://registry.npmjs.org/ && \
+    npm config set fetch-retry-mintimeout 20000 && \
+    npm config set fetch-retry-maxtimeout 120000
 
 # Install Chromium and dependencies with container optimizations
 RUN apk add --no-cache \
@@ -24,7 +29,7 @@ WORKDIR /workspace
 COPY package*.json ./
 
 # Install dependencies
-RUN npm install --only=production
+RUN npm ci --only=production --no-audit --no-fund
 
 # Copy application code
 COPY . .

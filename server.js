@@ -1186,7 +1186,7 @@ async function getGoogleSheetsAuthHeaders() {
     const token = await getValidAccessToken();
     
     // Check if it's a service account JSON or OAuth token
-    if (token.startsWith('{') && token.includes('"type":"service_account"')) {
+    if (token.startsWith('{') && token.includes('"type"') && token.includes('service_account')) {
       // Service Account JSON - need to create JWT and exchange for access token
       console.log('🔑 Using Service Account authentication');
       return await getServiceAccountAccessToken(token);

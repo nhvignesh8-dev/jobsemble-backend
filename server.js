@@ -1542,42 +1542,79 @@ app.post('/api/proxy/search-jobs', authenticateToken, apiRateLimit, async (req, 
       });
 
     } else if (provider === 'serp') {
-      // SERP API search
-      const params = new URLSearchParams({
-        api_key: apiKey,
-        engine: 'google',
-        q: jobBoardQuery,
-        num: '100'
-      });
+      // SERP API search with pagination to get more results
+      let allOrganicResults = [];
+      const maxPages = 5; // Get up to 5 pages (50 results)
+      const resultsPerPage = 10; // Google typically returns 10 per page
+      
+      for (let page = 0; page < maxPages; page++) {
+        const start = page * resultsPerPage;
+        const params = new URLSearchParams({
+          api_key: apiKey,
+          engine: 'google',
+          q: jobBoardQuery,
+          num: '10', // Google's default per page
+          start: start.toString()
+        });
 
-      if (timeFilter && timeFilter !== 'anytime') {
-        const timeFilters = {
-          'day': 'qdr:d',
-          'week': 'qdr:w', 
-          'month': 'qdr:m',
-          'year': 'qdr:y',
-          'qdr:d': 'qdr:d',
-          'qdr:w': 'qdr:w',
-          'qdr:m': 'qdr:m',
-          'qdr:y': 'qdr:y'
-        };
-        params.append('tbs', timeFilters[timeFilter] || timeFilter);
+        if (timeFilter && timeFilter !== 'anytime') {
+          const timeFilters = {
+            'day': 'qdr:d',
+            'week': 'qdr:w', 
+            'month': 'qdr:m',
+            'year': 'qdr:y',
+            'qdr:d': 'qdr:d',
+            'qdr:w': 'qdr:w',
+            'qdr:m': 'qdr:m',
+            'qdr:y': 'qdr:y'
+          };
+          params.append('tbs', timeFilters[timeFilter] || timeFilter);
+        }
+
+        console.log(`📊 [SERP DEBUG] Fetching page ${page + 1} (start: ${start})`);
+        
+        try {
+          const serpResponse = await axios.get(`https://serpapi.com/search?${params}`, {
+            timeout: 30000
+          });
+
+          const organicResults = serpResponse.data.organic_results || [];
+          const searchInformation = serpResponse.data.search_information || {};
+          
+          console.log(`📊 [SERP DEBUG] Page ${page + 1} results: ${organicResults.length}`);
+          console.log(`📊 [SERP DEBUG] Total available: ${searchInformation.total_results || 'unknown'}`);
+          
+          if (organicResults.length === 0) {
+            console.log(`📊 [SERP DEBUG] No more results on page ${page + 1}, stopping pagination`);
+            break;
+          }
+          
+          allOrganicResults.push(...organicResults);
+          
+          // If we got less than 10 results, we've reached the end
+          if (organicResults.length < resultsPerPage) {
+            console.log(`📊 [SERP DEBUG] Reached end of results (got ${organicResults.length} < ${resultsPerPage})`);
+            break;
+          }
+          
+          // Small delay between requests to be respectful to the API
+          await new Promise(resolve => setTimeout(resolve, 100));
+          
+        } catch (pageError) {
+          console.error(`❌ [SERP DEBUG] Error fetching page ${page + 1}:`, pageError.message);
+          break; // Stop pagination on error
+        }
       }
-
-      const serpResponse = await axios.get(`https://serpapi.com/search?${params}`, {
-        timeout: 30000
-      });
-
-      // Process SERP results into job format
-      const organicResults = serpResponse.data.organic_results || [];
+      
+      console.log(`📊 [SERP DEBUG] Total organic results collected: ${allOrganicResults.length}`);
       
       // Debug: Log first result to see available fields
-      if (organicResults.length > 0) {
-        console.log(`🔍 Sample SERP result fields:`, Object.keys(organicResults[0]));
-        console.log(`🔍 Sample SERP result:`, JSON.stringify(organicResults[0], null, 2));
+      if (allOrganicResults.length > 0) {
+        console.log(`🔍 Sample SERP result fields:`, Object.keys(allOrganicResults[0]));
+        console.log(`🔍 Sample SERP result:`, JSON.stringify(allOrganicResults[0], null, 2));
       }
       
-      searchResults = organicResults.map(result => {
+      searchResults = allOrganicResults.map(result => {
         const cleanTitle = cleanJobTitle(result.title, 'serp', jobBoard);
         
         // Try to extract date from various possible fields
@@ -1606,6 +1643,7 @@ app.post('/api/proxy/search-jobs', authenticateToken, apiRateLimit, async (req, 
     }
 
     // Filter out results that don't look like jobs
+    console.log(`📊 [FILTER DEBUG] Before filtering: ${searchResults.length} results`);
     searchResults = searchResults.filter(job => {
       if (!job.title || !job.url || job.title.length < 3) {
         console.log(`❌ Filtering out: missing title/url or too short`);
@@ -1853,6 +1891,8 @@ app.post('/api/proxy/search-jobs', authenticateToken, apiRateLimit, async (req, 
       console.log(`✅ Keeping job: "${job.title}" at ${job.company}`);
       return true;
     });
+    
+    console.log(`📊 [FILTER DEBUG] After filtering: ${searchResults.length} results`);
 
     // Increment usage tracking after successful search (only for freemium/system keys)
     // For Tavily: Only increment if using system key (freemium), not user's own key

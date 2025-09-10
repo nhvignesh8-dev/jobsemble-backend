@@ -517,7 +517,7 @@ app.post('/api/export-to-sheets', authenticateToken, async (req, res) => {
     const existingDataResponse = await fetch(
       `https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values/Sheet1!A1:Z1000`,
       {
-        headers: { 'Authorization': `Bearer ${accessToken}` }
+        headers: { 'Authorization': authHeaders['Authorization'] }
       }
     );
 
@@ -537,10 +537,7 @@ app.post('/api/export-to-sheets', authenticateToken, async (req, res) => {
       `https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values/Sheet1!A1:append?valueInputOption=USER_ENTERED`,
       {
         method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${accessToken}`,
-          'Content-Type': 'application/json'
-        },
+        headers: authHeaders,
         body: JSON.stringify({
           values: dataToAppend
         })
@@ -1178,6 +1175,90 @@ async function getValidAccessToken() {
     console.error('❌ Error getting Google access token:', error);
     throw error;
   }
+}
+
+// Helper function to get Google Sheets API authentication headers
+async function getGoogleSheetsAuthHeaders() {
+  try {
+    const token = await getValidAccessToken();
+    
+    // Check if it's a service account JSON or OAuth token
+    if (token.startsWith('{') && token.includes('"type":"service_account"')) {
+      // Service Account JSON - need to create JWT and exchange for access token
+      console.log('🔑 Using Service Account authentication');
+      return await getServiceAccountAccessToken(token);
+    } else {
+      // OAuth access token - use directly
+      console.log('🔑 Using OAuth access token');
+      return {
+        'Authorization': `Bearer ${token}`,
+        'Content-Type': 'application/json'
+      };
+    }
+  } catch (error) {
+    console.error('❌ Error getting Google Sheets auth headers:', error);
+    throw error;
+  }
+}
+
+// Helper function to get access token from Service Account JSON
+async function getServiceAccountAccessToken(serviceAccountJson) {
+  try {
+    const serviceAccount = JSON.parse(serviceAccountJson);
+    const now = Math.floor(Date.now() / 1000);
+    
+    // Create JWT header
+    const header = {
+      alg: 'RS256',
+      typ: 'JWT'
+    };
+    
+    // Create JWT payload
+    const payload = {
+      iss: serviceAccount.client_email,
+      scope: 'https://www.googleapis.com/auth/spreadsheets https://www.googleapis.com/auth/drive',
+      aud: 'https://oauth2.googleapis.com/token',
+      iat: now,
+      exp: now + 3600 // 1 hour
+    };
+    
+    // Create JWT
+    const jwt = await createJWT(header, payload, serviceAccount.private_key);
+    
+    // Exchange JWT for access token
+    const response = await axios.post('https://oauth2.googleapis.com/token', {
+      grant_type: 'urn:ietf:params:oauth:grant-type:jwt-bearer',
+      assertion: jwt
+    });
+    
+    const accessToken = response.data.access_token;
+    console.log('✅ Service Account access token obtained');
+    
+    return {
+      'Authorization': authHeaders['Authorization'],
+      'Content-Type': 'application/json'
+    };
+    
+  } catch (error) {
+    console.error('❌ Error getting Service Account access token:', error);
+    throw error;
+  }
+}
+
+// Helper function to create JWT
+async function createJWT(header, payload, privateKey) {
+  const crypto = await import('crypto');
+  
+  const encodedHeader = Buffer.from(JSON.stringify(header)).toString('base64url');
+  const encodedPayload = Buffer.from(JSON.stringify(payload)).toString('base64url');
+  
+  const signature = crypto.createSign('RSA-SHA256')
+    .update(`${encodedHeader}.${encodedPayload}`)
+    .sign(privateKey, 'base64');
+  
+  const encodedSignature = Buffer.from(signature, 'base64').toString('base64url');
+  
+  return `${encodedHeader}.${encodedPayload}.${encodedSignature}`;
 }
 
 // Helper function to get Tavily account usage from their API
@@ -2075,10 +2156,7 @@ app.post('/api/update-sheet-cell', authenticateToken, async (req, res) => {
       `https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values/${cellRange}?valueInputOption=RAW`,
       {
         method: 'PUT',
-        headers: {
-          'Authorization': `Bearer ${accessToken}`,
-          'Content-Type': 'application/json'
-        },
+        headers: authHeaders,
         body: JSON.stringify({
           values: [[value]]
         })
@@ -2120,7 +2198,7 @@ app.post('/api/save-filter', authenticateToken, async (req, res) => {
     const sheetsResponse = await fetch(
       `https://sheets.googleapis.com/v4/spreadsheets/${sheetId}?fields=sheets.properties.title`,
       {
-        headers: { 'Authorization': `Bearer ${accessToken}` }
+        headers: { 'Authorization': authHeaders['Authorization'] }
       }
     );
 
@@ -2137,10 +2215,7 @@ app.post('/api/save-filter', authenticateToken, async (req, res) => {
         `https://sheets.googleapis.com/v4/spreadsheets/${sheetId}:batchUpdate`,
         {
           method: 'POST',
-          headers: {
-            'Authorization': `Bearer ${accessToken}`,
-            'Content-Type': 'application/json'
-          },
+          headers: authHeaders,
           body: JSON.stringify({
             requests: [{
               addSheet: {
@@ -2163,7 +2238,7 @@ app.post('/api/save-filter', authenticateToken, async (req, res) => {
     const filtersResponse = await fetch(
       `https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values/Filters!A1:Z1000`,
       {
-        headers: { 'Authorization': `Bearer ${accessToken}` }
+        headers: { 'Authorization': authHeaders['Authorization'] }
       }
     );
 
@@ -2199,10 +2274,7 @@ app.post('/api/save-filter', authenticateToken, async (req, res) => {
       `https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values/Filters!A1:Z1000?valueInputOption=RAW`,
       {
         method: 'PUT',
-        headers: {
-          'Authorization': `Bearer ${accessToken}`,
-          'Content-Type': 'application/json'
-        },
+        headers: authHeaders,
         body: JSON.stringify({ values: filterData })
       }
     );
@@ -2239,7 +2311,7 @@ app.post('/api/load-filters', authenticateToken, async (req, res) => {
     const filtersResponse = await fetch(
       `https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values/Filters!A1:Z1000`,
       {
-        headers: { 'Authorization': `Bearer ${accessToken}` }
+        headers: { 'Authorization': authHeaders['Authorization'] }
       }
     );
 
@@ -2290,7 +2362,7 @@ app.post('/api/read-sheet', authenticateToken, async (req, res) => {
     const valuesResponse = await fetch(
       `https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values/${encodeURIComponent(effectiveRange)}`,
       {
-        headers: { 'Authorization': `Bearer ${accessToken}` }
+        headers: { 'Authorization': authHeaders['Authorization'] }
       }
     );
 
@@ -2331,7 +2403,7 @@ app.post('/api/delete-filter', authenticateToken, async (req, res) => {
     const filtersResponse = await fetch(
       `https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values/Filters!A1:Z1000`,
       {
-        headers: { 'Authorization': `Bearer ${accessToken}` }
+        headers: { 'Authorization': authHeaders['Authorization'] }
       }
     );
 
@@ -2358,10 +2430,7 @@ app.post('/api/delete-filter', authenticateToken, async (req, res) => {
       `https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values/Filters!A1:Z1000?valueInputOption=RAW`,
       {
         method: 'PUT',
-        headers: {
-          'Authorization': `Bearer ${accessToken}`,
-          'Content-Type': 'application/json'
-        },
+        headers: authHeaders,
         body: JSON.stringify({ values: filterData })
       }
     );

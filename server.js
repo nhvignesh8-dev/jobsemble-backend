@@ -72,45 +72,51 @@ function invalidateUserSession(userId, reason = 'New session created') {
   return null;
 }
 
-// Helper function to get valid Google OAuth access token from user's database record
-async function getValidAccessToken(userId) {
-  try {
-    // Get user's Google OAuth token from database (same as other API keys)
-    const userDocs = await databases.listDocuments(
-      DATABASE_ID,
-      COLLECTION_ID,
-      [Query.equal('accountId', userId)]
-    );
-
-    if (userDocs.documents.length === 0) {
-      console.warn('⚠️ User profile not found for Google OAuth token');
-      return 'placeholder-google-token';
-    }
-
-    const userProfile = userDocs.documents[0];
-    let apiKeys = {};
-    
-    try {
-      apiKeys = JSON.parse(userProfile.apiKeys || '{}');
-    } catch (e) {
-      apiKeys = {};
-    }
-
-    // Check for Google OAuth access token in user's stored API keys
-    const googleAccessToken = apiKeys.googleAccessToken || apiKeys.googleOAuthToken || apiKeys.google_access_token;
-    
-    if (!googleAccessToken) {
-      console.warn('⚠️ No Google OAuth token found in user database record');
-      console.warn('⚠️ Available keys:', Object.keys(apiKeys));
-      return 'placeholder-google-token';
-    }
-    
-    console.log('✅ Google OAuth token found in database, length:', googleAccessToken.length);
-    return googleAccessToken;
-  } catch (error) {
-    console.error('❌ Error getting Google OAuth token from database:', error);
-    return 'placeholder-google-token';
+// Helper function to get valid Google OAuth access token
+async function getValidAccessToken(userId = null) {
+  // For reading public sheets, try environment variables first (system token)
+  const systemGoogleToken = process.env.SYSTEM_GOOGLE_ACCESS_TOKEN || 
+                           process.env.VITE_APP_GOOGLE_ACCESS_TOKEN ||
+                           process.env.APP_GOOGLE_ACCESS_TOKEN;
+  
+  if (systemGoogleToken && systemGoogleToken !== 'placeholder-google-token') {
+    console.log('✅ Using system Google OAuth token for reading');
+    return systemGoogleToken;
   }
+
+  // If no system token and userId provided, try user's database record (for write operations)
+  if (userId) {
+    try {
+      const userDocs = await databases.listDocuments(
+        DATABASE_ID,
+        COLLECTION_ID,
+        [Query.equal('accountId', userId)]
+      );
+
+      if (userDocs.documents.length > 0) {
+        const userProfile = userDocs.documents[0];
+        let apiKeys = {};
+        
+        try {
+          apiKeys = JSON.parse(userProfile.apiKeys || '{}');
+        } catch (e) {
+          apiKeys = {};
+        }
+
+        const googleAccessToken = apiKeys.googleAccessToken || apiKeys.googleOAuthToken || apiKeys.google_access_token;
+        
+        if (googleAccessToken) {
+          console.log('✅ Using user Google OAuth token from database');
+          return googleAccessToken;
+        }
+      }
+    } catch (error) {
+      console.error('❌ Error getting user Google OAuth token:', error);
+    }
+  }
+  
+  console.warn('⚠️ No valid Google OAuth token found - using placeholder');
+  return 'placeholder-google-token';
 }
 
 // Security Middleware
@@ -2542,16 +2548,6 @@ app.post('/api/read-sheet', authenticateToken, async (req, res) => {
     if (!response.ok) {
       const errorData = await response.json();
       console.error('Google Sheets API error:', errorData);
-      
-      // If it's an authorization error, return a more user-friendly response
-      if (response.status === 401 || response.status === 403) {
-        return res.json({ 
-          success: false, 
-          error: 'Google Sheets authorization required. Please set up Google OAuth.',
-          needsAuth: true
-        });
-      }
-      
       return res.status(500).json({ 
         success: false, 
         error: `Failed to read sheet: ${response.statusText}` 

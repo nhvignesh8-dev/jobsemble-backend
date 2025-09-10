@@ -1895,8 +1895,9 @@ app.post('/api/save-filter', authenticateToken, async (req, res) => {
         existingFilters = filtersData.values.slice(1).map(row => ({
           id: row[0],
           name: row[1],
-          location: row[2],
-          roles: row[3] ? JSON.parse(row[3]) : []
+          locations: row[2] || '',
+          applicationStatuses: row[3] || '',
+          jobTitleKeywords: row[4] || ''
         }));
       }
     }
@@ -1909,8 +1910,8 @@ app.post('/api/save-filter', authenticateToken, async (req, res) => {
     
     // Prepare data for writing
     const filterData = [
-      ['ID', 'Name', 'Location', 'Roles'], // Headers
-      ...newFilters.map(f => [f.id, f.name, f.location, JSON.stringify(f.roles)])
+      ['ID', 'Name', 'Locations', 'ApplicationStatuses', 'JobTitleKeywords'], // Headers
+      ...newFilters.map(f => [f.id, f.name, f.locations, f.applicationStatuses, f.jobTitleKeywords])
     ];
 
     // Write filters to sheet
@@ -1975,11 +1976,12 @@ app.post('/api/load-filters', authenticateToken, async (req, res) => {
     const filters = filtersData.values.slice(1).map(row => ({
       id: row[0],
       name: row[1],
-      location: row[2],
-      roles: row[3] ? JSON.parse(row[3]) : []
+      locations: row[2] || '',
+      applicationStatuses: row[3] || '',
+      jobTitleKeywords: row[4] || ''
     }));
 
-    res.json({ success: true, jobs: filters });
+    res.json({ success: true, filters: filters });
   } catch (error) {
     console.error('Error loading filters:', error);
     res.status(500).json({ error: 'Internal server error' });
@@ -2025,7 +2027,7 @@ app.post('/api/delete-filter', authenticateToken, async (req, res) => {
     
     // Prepare data for writing
     const filterData = [
-      ['ID', 'Name', 'Location', 'Roles'], // Headers
+      ['ID', 'Name', 'Locations', 'ApplicationStatuses', 'JobTitleKeywords'], // Headers
       ...remainingFilters
     ];
 

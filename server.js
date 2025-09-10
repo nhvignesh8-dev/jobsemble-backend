@@ -2375,8 +2375,30 @@ app.post('/api/read-sheet', authenticateToken, async (req, res) => {
     const valuesData = await valuesResponse.json();
     const rawData = valuesData.values || [];
 
+    // Process raw data into job objects
+    const jobs = [];
+    const headers = rawData.length > 0 ? rawData[0] : [];
+    
+    if (rawData.length > 1) {
+      // Skip header row, process data rows
+      for (let i = 1; i < rawData.length; i++) {
+        const row = rawData[i];
+        if (row && row.length > 0 && row[0]) { // Skip empty rows
+          const job = {};
+          headers.forEach((header, index) => {
+            if (header && row[index] !== undefined) {
+              job[header] = row[index];
+            }
+          });
+          jobs.push(job);
+        }
+      }
+    }
+
+    console.log(`📊 Processed ${jobs.length} jobs from ${rawData.length} rows`);
+
     // Keep response shape aligned with frontend expectations
-    return res.json({ success: true, rawData, jobs: [] });
+    return res.json({ success: true, rawData, jobs, headers });
   } catch (error) {
     console.error('Error reading sheet:', error);
     return res.status(500).json({ success: false, error: 'Internal server error' });

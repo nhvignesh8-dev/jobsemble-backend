@@ -31,7 +31,7 @@ app.set('trust proxy', 1);
 // Security Configuration
 const JWT_SECRET = process.env.JWT_SECRET || crypto.randomBytes(64).toString('hex');
 // Use a consistent encryption key to avoid decryption issues
-const ENCRYPTION_KEY = process.env.ENCRYPTION_KEY || crypto.scryptSync('job-scout-encryption-key-2024', 'salt', 32);
+const ENCRYPTION_KEY = process.env.ENCRYPTION_KEY ? Buffer.from(process.env.ENCRYPTION_KEY, 'hex') : crypto.scryptSync('job-scout-encryption-key-2024', 'salt', 32);
 
 // System API Keys for freemium users - stored encrypted in database
 // Create a system user profile to store encrypted system API keys

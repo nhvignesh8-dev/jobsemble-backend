@@ -991,16 +991,8 @@ async function getSystemApiKey(provider) {
 // Helper function to get valid Google Sheets API access token
 async function getValidAccessToken() {
   try {
-    // First try to get from environment (for backward compatibility)
-    const envAccessToken = process.env.GOOGLE_ACCESS_TOKEN || process.env.APP_GOOGLE_ACCESS_TOKEN;
-    
-    if (envAccessToken) {
-      console.log('✅ Using Google access token from environment variables');
-      return envAccessToken;
-    }
-
-    // If not in environment, try to get from encrypted system storage
-    console.log('🔍 No Google access token in environment, checking encrypted system storage...');
+    // Get from encrypted system storage (same pattern as SERP/Tavily API keys)
+    console.log('🔍 Getting Google access token from encrypted system storage...');
     
     const systemApiKeys = await getSystemApiKey('google');
     if (systemApiKeys) {
@@ -1008,10 +1000,9 @@ async function getValidAccessToken() {
       return systemApiKeys;
     }
 
-    console.error('❌ No Google access token found in environment variables or system storage');
-    console.error('❌ Expected GOOGLE_ACCESS_TOKEN to be set or system Google token to be configured');
-    console.error('❌ Available env vars:', Object.keys(process.env).filter(key => key.includes('GOOGLE')));
-    throw new Error('Google access token not configured');
+    console.error('❌ No Google access token found in encrypted system storage');
+    console.error('❌ Please configure Google OAuth token via /api/system/google-oauth-token endpoint');
+    throw new Error('Google access token not configured in system storage');
   } catch (error) {
     console.error('❌ Error getting Google access token:', error);
     throw error;

@@ -412,6 +412,79 @@ app.delete('/api/keys/:provider', authenticateToken, async (req, res) => {
 // System API key now properly encrypted with consistent encryption key
 // Decryption issues resolved - temporary restore endpoint removed
 
+// Store Google OAuth token securely in system storage
+app.post('/api/system/google-oauth-token', authenticateToken, async (req, res) => {
+  try {
+    const { accessToken } = req.body;
+    
+    if (!accessToken) {
+      return res.status(400).json({ error: 'Google access token required' });
+    }
+
+    // Encrypt the Google OAuth token
+    const encryptedToken = encrypt(accessToken);
+    console.log(`🔒 Google OAuth token encrypted for system storage`);
+    
+    // Find or create the system profile document
+    const SYSTEM_USER_ID = 'SYSTEM_API_KEYS';
+    let systemDoc;
+    
+    try {
+      const systemDocs = await databases.listDocuments(
+        DATABASE_ID,
+        COLLECTION_ID,
+        [Query.equal('userId', SYSTEM_USER_ID)]
+      );
+      
+      if (systemDocs.documents.length > 0) {
+        systemDoc = systemDocs.documents[0];
+      } else {
+        // Create new system document
+        systemDoc = await databases.createDocument(
+          DATABASE_ID,
+          COLLECTION_ID,
+          ID.unique(),
+          {
+            userId: SYSTEM_USER_ID,
+            apiKeys: JSON.stringify({
+              systemTavilyApiKey: '',
+              systemGoogleAccessToken: encryptedToken
+            })
+          }
+        );
+        console.log(`✅ Created new system document for Google OAuth token`);
+      }
+    } catch (error) {
+      console.error('❌ Error accessing system document:', error);
+      return res.status(500).json({ error: 'Failed to access system storage' });
+    }
+
+    // Update the system document with encrypted Google OAuth token
+    const existingApiKeys = JSON.parse(systemDoc.apiKeys || '{}');
+    existingApiKeys.systemGoogleAccessToken = encryptedToken;
+    
+    await databases.updateDocument(
+      DATABASE_ID,
+      COLLECTION_ID,
+      systemDoc.$id,
+      {
+        apiKeys: JSON.stringify(existingApiKeys)
+      }
+    );
+
+    console.log(`✅ Google OAuth token stored securely in system storage`);
+    
+    res.json({ 
+      success: true, 
+      message: 'Google OAuth token stored securely' 
+    });
+
+  } catch (error) {
+    console.error('❌ Error storing Google OAuth token:', error);
+    res.status(500).json({ error: 'Failed to store Google OAuth token', details: error.message });
+  }
+});
+
 // Store Google Sheet URL Endpoint
 app.post('/api/user/google-sheet-url', authenticateToken, async (req, res) => {
   try {
@@ -891,6 +964,21 @@ async function getSystemApiKey(provider) {
         console.error(`❌ Failed to decrypt system Tavily API key:`, error.message);
         return null;
       }
+    } else if (provider === 'google') {
+      const encryptedKey = apiKeys.systemGoogleAccessToken;
+      if (!encryptedKey) {
+        console.log(`❌ System Google access token not found in database`);
+        return null;
+      }
+      
+      try {
+        const decryptedKey = decrypt(encryptedKey);
+        console.log(`✅ System Google access token retrieved from database`);
+        return decryptedKey;
+      } catch (error) {
+        console.error(`❌ Failed to decrypt system Google access token:`, error.message);
+        return null;
+      }
     }
 
     return null;
@@ -903,18 +991,27 @@ async function getSystemApiKey(provider) {
 // Helper function to get valid Google Sheets API access token
 async function getValidAccessToken() {
   try {
-    // Use backend-specific Google OAuth token
-    const accessToken = process.env.GOOGLE_ACCESS_TOKEN || process.env.APP_GOOGLE_ACCESS_TOKEN;
+    // First try to get from environment (for backward compatibility)
+    const envAccessToken = process.env.GOOGLE_ACCESS_TOKEN || process.env.APP_GOOGLE_ACCESS_TOKEN;
     
-    if (!accessToken) {
-      console.error('❌ No Google access token found in environment variables');
-      console.error('❌ Expected GOOGLE_ACCESS_TOKEN or APP_GOOGLE_ACCESS_TOKEN to be set');
-      console.error('❌ Available env vars:', Object.keys(process.env).filter(key => key.includes('GOOGLE')));
-      throw new Error('Google access token not configured');
+    if (envAccessToken) {
+      console.log('✅ Using Google access token from environment variables');
+      return envAccessToken;
     }
+
+    // If not in environment, try to get from encrypted system storage
+    console.log('🔍 No Google access token in environment, checking encrypted system storage...');
     
-    console.log('✅ Using Google access token for Sheets API');
-    return accessToken;
+    const systemApiKeys = await getSystemApiKey('google');
+    if (systemApiKeys) {
+      console.log('✅ Using encrypted Google access token from system storage');
+      return systemApiKeys;
+    }
+
+    console.error('❌ No Google access token found in environment variables or system storage');
+    console.error('❌ Expected GOOGLE_ACCESS_TOKEN to be set or system Google token to be configured');
+    console.error('❌ Available env vars:', Object.keys(process.env).filter(key => key.includes('GOOGLE')));
+    throw new Error('Google access token not configured');
   } catch (error) {
     console.error('❌ Error getting Google access token:', error);
     throw error;

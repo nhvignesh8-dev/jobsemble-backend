@@ -81,13 +81,20 @@ async function getValidAccessToken(userId = null) {
     try {
       console.log('🔍 Looking for Google Service Account in database...');
       const systemDoc = await databases.getDocument(DATABASE_ID, COLLECTION_ID, '68c1d918601d5f9f7958');
+      console.log('📄 System document retrieved:', !!systemDoc);
       
       if (systemDoc.apiKeys) {
+        console.log('🔑 API keys found in document');
         const apiKeys = JSON.parse(systemDoc.apiKeys);
+        console.log('🔑 Parsed API keys:', Object.keys(apiKeys));
         if (apiKeys.googleServiceAccountKey) {
           serviceAccountKey = apiKeys.googleServiceAccountKey;
           console.log('✅ Found Google Service Account in database');
+        } else {
+          console.log('❌ No Google Service Account key found in apiKeys');
         }
+      } else {
+        console.log('❌ No apiKeys found in system document');
       }
     } catch (error) {
       console.log('⚠️ Could not retrieve service account from database:', error.message);

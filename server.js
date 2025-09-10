@@ -1142,6 +1142,9 @@ async function getSystemApiKey(provider) {
       try {
         const decryptedKey = decrypt(encryptedKey);
         console.log(`✅ System Google access token retrieved from database`);
+        console.log(`🔍 Decrypted token preview:`, decryptedKey.substring(0, 100) + '...');
+        console.log(`🔍 Token starts with { :`, decryptedKey.startsWith('{'));
+        console.log(`🔍 Token contains service_account:`, decryptedKey.includes('"type":"service_account"'));
         return decryptedKey;
       } catch (error) {
         console.error(`❌ Failed to decrypt system Google access token:`, error.message);

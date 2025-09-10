@@ -1,10 +1,11 @@
 # Use Alpine Linux with Node.js for smaller image and better container compatibility  
-FROM node:18.20.4-alpine
+FROM node:20-alpine
 
-# Set npm configuration for better reliability
+# Set npm configuration for better reliability and fix aliases issue
 RUN npm config set registry https://registry.npmjs.org/ && \
     npm config set fetch-retry-mintimeout 20000 && \
-    npm config set fetch-retry-maxtimeout 120000
+    npm config set fetch-retry-maxtimeout 120000 && \
+    npm config delete aliases
 
 # Install Chromium and dependencies with container optimizations
 RUN apk add --no-cache \
@@ -28,8 +29,9 @@ WORKDIR /workspace
 # Copy package files
 COPY package*.json ./
 
-# Install dependencies
-RUN npm ci --only=production --no-audit --no-fund
+# Install dependencies with explicit npm configuration
+RUN npm config delete aliases && \
+    npm ci --only=production --no-audit --no-fund --prefer-offline
 
 # Copy application code
 COPY . .

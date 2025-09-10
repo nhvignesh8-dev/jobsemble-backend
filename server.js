@@ -2327,7 +2327,74 @@ app.use((error, req, res, next) => {
 });
 
 // Start server
-app.listen(PORT, () => {
+async function bootstrapSystemGoogleTokenIfProvided() {
+  try {
+    const bootstrapToken = process.env.GOOGLE_ACCESS_TOKEN;
+    if (!bootstrapToken) return;
+
+    console.log('🧰 Bootstrap: GOOGLE_ACCESS_TOKEN provided via env - attempting secure store');
+
+    // Check if token already exists in system storage
+    const existing = await getSystemApiKey('google');
+    if (existing) {
+      console.log('✅ Bootstrap: System Google token already present; skipping store');
+      return;
+    }
+
+    // Encrypt and persist using same path as admin endpoint
+    const encryptedToken = encrypt(bootstrapToken);
+
+    const SYSTEM_USER_ID = 'SYSTEM_API_KEYS';
+    let systemDoc;
+
+    try {
+      const systemDocs = await databases.listDocuments(
+        DATABASE_ID,
+        COLLECTION_ID,
+        [Query.equal('userId', SYSTEM_USER_ID)]
+      );
+
+      if (systemDocs.documents.length > 0) {
+        systemDoc = systemDocs.documents[0];
+      } else {
+        systemDoc = await databases.createDocument(
+          DATABASE_ID,
+          COLLECTION_ID,
+          ID.unique(),
+          {
+            userId: SYSTEM_USER_ID,
+            apiKeys: JSON.stringify({
+              systemTavilyApiKey: '',
+              systemGoogleAccessToken: encryptedToken
+            })
+          }
+        );
+        console.log('✅ Bootstrap: Created system document');
+      }
+    } catch (err) {
+      console.error('❌ Bootstrap: Failed to access system storage:', err.message);
+      return;
+    }
+
+    try {
+      const existingApiKeys = JSON.parse(systemDoc.apiKeys || '{}');
+      existingApiKeys.systemGoogleAccessToken = encryptedToken;
+      await databases.updateDocument(
+        DATABASE_ID,
+        COLLECTION_ID,
+        systemDoc.$id,
+        { apiKeys: JSON.stringify(existingApiKeys) }
+      );
+      console.log('🔒 Bootstrap: Stored Google token securely in DB');
+    } catch (err) {
+      console.error('❌ Bootstrap: Failed to persist Google token:', err.message);
+    }
+  } catch (err) {
+    console.error('❌ Bootstrap error:', err.message);
+  }
+}
+
+app.listen(PORT, async () => {
   console.log(`🔒 Secure API Proxy running on port ${PORT}`);
   console.log('🛡️ Security features enabled:');
   console.log('  - Helmet security headers');
@@ -2336,4 +2403,5 @@ app.listen(PORT, () => {
   console.log('  - Audit logging');
   console.log('  - JWT authentication');
   console.log('  - Input validation');
+  await bootstrapSystemGoogleTokenIfProvided();
 });

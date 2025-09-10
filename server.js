@@ -91,6 +91,7 @@ async function getValidAccessToken(userId = null) {
       }
     } catch (error) {
       console.log('⚠️ Could not retrieve service account from database:', error.message);
+      console.log('🔍 Database error details:', error);
     }
     
     // Fallback to environment variable
@@ -2638,63 +2639,6 @@ app.post('/api/read-sheet', authenticateToken, async (req, res) => {
       success: false, 
       error: 'Internal server error' 
     });
-  }
-});
-
-// Job search proxy endpoint - calls main backend
-app.post('/api/proxy/search-jobs', authenticateToken, async (req, res) => {
-  try {
-    const { query, location, jobBoard, provider, timeFilter } = req.body;
-    
-    if (!query || !jobBoard || !provider) {
-      return res.status(400).json({ error: 'Missing required fields' });
-    }
-
-    // Call the main backend's job search endpoint
-    const mainBackendUrl = process.env.MAIN_BACKEND_URL || 'http://localhost:3002';
-    const response = await fetch(`${mainBackendUrl}/api/scrape-jobs`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        jobTitle: query,
-        location: location || '',
-        jobBoards: [jobBoard],
-        searchEngine: provider,
-        timeFilter: timeFilter || 'qdr:d'
-      })
-    });
-
-    if (!response.ok) {
-      const errorData = await response.json().catch(() => ({ error: 'Main backend error' }));
-      return res.status(response.status).json({ error: errorData.error || 'Job search failed' });
-    }
-
-    const result = await response.json();
-    
-    // Transform the result to match the expected format
-    const jobs = result.jobs || [];
-    const transformedJobs = jobs.map(job => ({
-      title: job.title,
-      company: job.company,
-      location: job.location,
-      url: job.url,
-      datePosted: job.datePosted,
-      description: job.description,
-      source: job.source || 'SERP API Google Search',
-      score: job.score || 0
-    }));
-
-    res.json({
-      success: true,
-      jobs: transformedJobs,
-      total: transformedJobs.length
-    });
-
-  } catch (error) {
-    console.error('Error in job search proxy:', error);
-    res.status(500).json({ error: 'Internal server error' });
   }
 });
 

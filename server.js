@@ -1146,15 +1146,37 @@ async function getUserApiKey(userId, provider) {
       console.log(`🔍 SERP API key ${key ? 'found' : 'not found'} for ${userId}`);
       console.log(`📊 SERP usage: ${usageTracking.searchesUsed} searches used, ${usageTracking.creditsRemaining} credits remaining`);
       
+      // If user doesn't have their own key, get system key
+      let actualKey = key;
+      let isUserKey = !!key;
+      
       if (!key) {
-        console.log(`❌ User ${userId} has no SERP API key`);
+        console.log(`🔍 User ${userId} has no SERP key, checking system key...`);
+        try {
+          const systemDoc = await databases.getDocument(DATABASE_ID, COLLECTION_ID, '68c1d918601d5f9f7958');
+          if (systemDoc.apiKeys) {
+            const systemApiKeys = JSON.parse(systemDoc.apiKeys);
+            actualKey = systemApiKeys.systemSerpApiKey;
+            if (actualKey) {
+              console.log(`✅ Found system SERP key`);
+            } else {
+              console.log(`❌ No system SERP key found`);
+            }
+          }
+        } catch (error) {
+          console.log(`❌ Error getting system SERP key:`, error.message);
+        }
+      }
+      
+      if (!actualKey) {
+        console.log(`❌ No SERP API key available for ${userId}`);
         return null;
       }
       
       return {
-        key,
+        key: actualKey,
         usageTracking,
-        isUserKey: true
+        isUserKey
       };
     }
     

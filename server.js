@@ -2542,6 +2542,16 @@ app.post('/api/read-sheet', authenticateToken, async (req, res) => {
     if (!response.ok) {
       const errorData = await response.json();
       console.error('Google Sheets API error:', errorData);
+      
+      // If it's an authorization error, return a more user-friendly response
+      if (response.status === 401 || response.status === 403) {
+        return res.json({ 
+          success: false, 
+          error: 'Google Sheets authorization required. Please set up Google OAuth.',
+          needsAuth: true
+        });
+      }
+      
       return res.status(500).json({ 
         success: false, 
         error: `Failed to read sheet: ${response.statusText}` 

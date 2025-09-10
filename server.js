@@ -1404,7 +1404,7 @@ app.post('/api/proxy/search-jobs', authenticateToken, apiRateLimit, async (req, 
           company = company
             .replace(/\?error=true/i, '')
             .replace(/\?.*$/, '') // Remove query parameters
-            .replace(/^embed$/i, 'Company') // Replace "Embed" with generic
+            .replace(/^embed$/i, 'Unknown Company') // Replace "Embed" with generic
             .replace(/^www\./i, '')
             .replace(/\.com$/i, '');
             
@@ -1648,14 +1648,32 @@ function extractCompanyFromUrl(url) {
           console.log(`✅ Greenhouse company from job-boards path: ${company}`);
           return company;
         }
+        // Try alternative patterns for job-boards URLs
+        const altMatch = url.match(/job-boards\.eu\.greenhouse\.io\/([^\/]+)/);
+        if (altMatch && altMatch[1]) {
+          const company = formatCompanyName(altMatch[1]);
+          console.log(`✅ Greenhouse company from job-boards.eu path: ${company}`);
+          return company;
+        }
         // If no specific company in path, it's an aggregator
         console.log(`⚠️ Greenhouse job-boards subdomain - using generic name`);
-        return "Multiple Companies (Greenhouse)";
+        return "Unknown Company";
       } else {
         const subdomain = hostname.split('.')[0];
         if (subdomain !== 'www' && subdomain !== 'boards' && subdomain !== 'job-boards') {
           const company = formatCompanyName(subdomain);
           console.log(`✅ Greenhouse company from subdomain: ${company}`);
+          return company;
+        }
+      }
+      
+      // Handle URLs with "embed" in the path - try to extract company from other parts
+      if (url.includes('embed')) {
+        // Try to extract company from the URL path before "embed"
+        const embedMatch = url.match(/\/([^\/]+)\/.*embed/i);
+        if (embedMatch && embedMatch[1] && !['jobs', 'careers', 'apply', 'company', 'about'].includes(embedMatch[1].toLowerCase())) {
+          const company = formatCompanyName(embedMatch[1]);
+          console.log(`✅ Greenhouse company from embed path: ${company}`);
           return company;
         }
       }
@@ -1716,7 +1734,7 @@ function extractCompanyFromUrl(url) {
     company = company.split('.')[0];
     
     // Skip generic terms
-    if (['jobs', 'careers', 'apply', 'talent', 'hiring', 'monster', 'indeed', 'linkedin'].includes(company.toLowerCase())) {
+    if (['jobs', 'careers', 'apply', 'talent', 'hiring', 'monster', 'indeed', 'linkedin', 'embed', 'multiple', 'companies'].includes(company.toLowerCase())) {
       console.log(`❌ Skipping generic domain: ${company}`);
       return null;
     }

@@ -74,45 +74,14 @@ function invalidateUserSession(userId, reason = 'New session created') {
 
 // Helper function to get valid Google OAuth access token
 async function getValidAccessToken(userId = null) {
-  // For reading public sheets, try environment variables first (system token)
+  // Use the same authentication method that works for reading
   const systemGoogleToken = process.env.SYSTEM_GOOGLE_ACCESS_TOKEN || 
                            process.env.VITE_APP_GOOGLE_ACCESS_TOKEN ||
                            process.env.APP_GOOGLE_ACCESS_TOKEN;
   
   if (systemGoogleToken && systemGoogleToken !== 'placeholder-google-token') {
-    console.log('✅ Using system Google OAuth token for reading');
+    console.log('✅ Using system Google OAuth token');
     return systemGoogleToken;
-  }
-
-  // If no system token and userId provided, try user's database record (for write operations)
-  if (userId) {
-    try {
-      const userDocs = await databases.listDocuments(
-        DATABASE_ID,
-        COLLECTION_ID,
-        [Query.equal('accountId', userId)]
-      );
-
-      if (userDocs.documents.length > 0) {
-        const userProfile = userDocs.documents[0];
-        let apiKeys = {};
-        
-        try {
-          apiKeys = JSON.parse(userProfile.apiKeys || '{}');
-        } catch (e) {
-          apiKeys = {};
-        }
-
-        const googleAccessToken = apiKeys.googleAccessToken || apiKeys.googleOAuthToken || apiKeys.google_access_token;
-        
-        if (googleAccessToken) {
-          console.log('✅ Using user Google OAuth token from database');
-          return googleAccessToken;
-        }
-      }
-    } catch (error) {
-      console.error('❌ Error getting user Google OAuth token:', error);
-    }
   }
   
   console.warn('⚠️ No valid Google OAuth token found - using placeholder');

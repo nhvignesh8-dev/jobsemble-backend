@@ -1146,37 +1146,15 @@ async function getUserApiKey(userId, provider) {
       console.log(`🔍 SERP API key ${key ? 'found' : 'not found'} for ${userId}`);
       console.log(`📊 SERP usage: ${usageTracking.searchesUsed} searches used, ${usageTracking.creditsRemaining} credits remaining`);
       
-      // If user doesn't have their own key, get system key
-      let actualKey = key;
-      let isUserKey = !!key;
-      
       if (!key) {
-        console.log(`🔍 User ${userId} has no SERP key, checking system key...`);
-        try {
-          const systemDoc = await databases.getDocument(DATABASE_ID, COLLECTION_ID, '68c1d918601d5f9f7958');
-          if (systemDoc.apiKeys) {
-            const systemApiKeys = JSON.parse(systemDoc.apiKeys);
-            actualKey = systemApiKeys.systemSerpApiKey;
-            if (actualKey) {
-              console.log(`✅ Found system SERP key`);
-            } else {
-              console.log(`❌ No system SERP key found`);
-            }
-          }
-        } catch (error) {
-          console.log(`❌ Error getting system SERP key:`, error.message);
-        }
-      }
-      
-      if (!actualKey) {
-        console.log(`❌ No SERP API key available for ${userId}`);
+        console.log(`❌ User ${userId} has no SERP API key`);
         return null;
       }
       
       return {
-        key: actualKey,
+        key,
         usageTracking,
-        isUserKey
+        isUserKey: true
       };
     }
     
@@ -1334,19 +1312,28 @@ app.post('/api/proxy/search-jobs', authenticateToken, apiRateLimit, async (req, 
   try {
     const { query, location, jobBoard, provider, timeFilter } = req.body;
     
+    console.log(`🔍 [DEBUG] Job search request received:`, {
+      query, location, jobBoard, provider, timeFilter,
+      userId: req.user.userId
+    });
+    
     if (!query || !location || !jobBoard || !provider) {
+      console.log(`❌ [DEBUG] Missing required fields`);
       return res.status(400).json({ error: 'Missing required fields (query, location, jobBoard, provider)' });
     }
 
     // Validate provider
     if (!['tavily', 'serp'].includes(provider)) {
+      console.log(`❌ [DEBUG] Invalid provider: ${provider}`);
       return res.status(400).json({ error: 'Invalid provider' });
     }
 
     console.log(`🔍 Job search request: ${query} in ${location} on ${jobBoard} via ${provider}`);
 
     // Get user's encrypted API key for the provider with usage info
+    console.log(`🔑 [DEBUG] Getting API key for user ${req.user.userId}, provider: ${provider}`);
     const keyInfo = await getUserApiKey(req.user.userId, provider);
+    console.log(`🔑 [DEBUG] API key result:`, keyInfo ? 'Found' : 'Not found');
     
     if (!keyInfo) {
       return res.status(404).json({ error: `${provider.charAt(0).toUpperCase() + provider.slice(1)} API key not found` });

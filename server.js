@@ -1396,27 +1396,10 @@ app.post('/api/proxy/search-jobs', authenticateToken, apiRateLimit, async (req, 
           datePosted = new Date(result.timestamp).toLocaleDateString();
         }
         
-        // Enhanced company extraction for Tavily Greenhouse results
-        let company = extractCompanyFromUrl(result.url) || extractCompanyFromJobBoard(jobBoard);
-        
-        // Clean up problematic company names
-        if (company) {
-          company = company
-            .replace(/\?error=true/i, '')
-            .replace(/\?.*$/, '') // Remove query parameters
-            .replace(/^embed$/i, 'Unknown Company') // Replace "Embed" with generic
-            .replace(/^www\./i, '')
-            .replace(/\.com$/i, '');
-            
-          // Capitalize properly
-          if (company.length > 1) {
-            company = company.charAt(0).toUpperCase() + company.slice(1).toLowerCase();
-          }
-        }
-        
+        // Return raw data - let frontend handle all cleaning and company extraction
         return {
           title: result.title,
-          company: company,
+          company: result.company || '', // Pass through raw company data
           location: location,
           url: result.url,
           description: result.content || '',
@@ -1479,7 +1462,7 @@ app.post('/api/proxy/search-jobs', authenticateToken, apiRateLimit, async (req, 
         
         return {
           title: result.title,
-          company: extractCompanyFromUrl(result.link) || extractCompanyFromJobBoard(jobBoard),
+          company: result.company || '', // Pass through raw company data
           location: location,
           url: result.link,
           description: result.snippet || '',

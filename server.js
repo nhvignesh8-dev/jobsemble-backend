@@ -2452,6 +2452,76 @@ async function bootstrapSystemGoogleTokenIfProvided() {
   }
 }
 
+// Direct endpoint to store Google OAuth token (no auth required for testing)
+app.post('/api/direct-store-google-token', async (req, res) => {
+  try {
+    const { accessToken } = req.body;
+    if (!accessToken) {
+      return res.status(400).json({ error: 'accessToken is required' });
+    }
+
+    console.log('🔒 Direct store: Encrypting Google OAuth token...');
+    const encryptedToken = encrypt(accessToken);
+    console.log('✅ Direct store: Token encrypted');
+
+    const SYSTEM_USER_ID = 'SYSTEM_API_KEYS';
+    let systemDoc;
+
+    try {
+      // Find or create the system profile document
+      const systemDocs = await databases.listDocuments(
+        DATABASE_ID,
+        COLLECTION_ID,
+        [Query.equal('userId', SYSTEM_USER_ID)]
+      );
+
+      if (systemDocs.documents.length > 0) {
+        console.log('📝 Direct store: Updating existing system document...');
+        systemDoc = systemDocs.documents[0];
+        const existingApiKeys = JSON.parse(systemDoc.apiKeys || '{}');
+        existingApiKeys.systemGoogleAccessToken = encryptedToken;
+        
+        await databases.updateDocument(
+          DATABASE_ID,
+          COLLECTION_ID,
+          systemDoc.$id,
+          {
+            apiKeys: JSON.stringify(existingApiKeys)
+          }
+        );
+        console.log('✅ Direct store: Updated existing system document');
+      } else {
+        console.log('📝 Direct store: Creating new system document...');
+        systemDoc = await databases.createDocument(
+          DATABASE_ID,
+          COLLECTION_ID,
+          ID.unique(),
+          {
+            userId: SYSTEM_USER_ID,
+            accountId: SYSTEM_USER_ID,
+            apiKeys: JSON.stringify({
+              systemSerpApiKey: '',
+              systemTavilyApiKey: '',
+              systemGoogleAccessToken: encryptedToken
+            })
+          }
+        );
+        console.log('✅ Direct store: Created new system document');
+      }
+    } catch (err) {
+      console.error('❌ Direct store: Failed to access system storage:', err);
+      return res.status(500).json({ error: 'Failed to access system storage', details: err.message });
+    }
+
+    console.log('🎉 Direct store: Google OAuth token stored successfully!');
+    res.json({ success: true, message: 'Google OAuth token stored successfully' });
+
+  } catch (error) {
+    console.error('❌ Direct store: Error storing Google OAuth token:', error);
+    res.status(500).json({ error: 'Failed to store Google OAuth token', details: error.message });
+  }
+});
+
 app.listen(PORT, async () => {
   console.log(`🔒 Secure API Proxy running on port ${PORT}`);
   console.log('🛡️ Security features enabled:');

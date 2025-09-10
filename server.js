@@ -412,6 +412,108 @@ app.delete('/api/keys/:provider', authenticateToken, async (req, res) => {
 // System API key now properly encrypted with consistent encryption key
 // Decryption issues resolved - temporary restore endpoint removed
 
+// Export jobs to Google Sheets using secured OAuth token
+app.post('/api/export-to-sheets', authenticateToken, async (req, res) => {
+  try {
+    const { sheetUrl, jobs } = req.body;
+    
+    if (!sheetUrl || !jobs || !Array.isArray(jobs)) {
+      return res.status(400).json({ error: 'Sheet URL and jobs array are required' });
+    }
+
+    console.log(`📊 Export request: ${jobs.length} jobs to Google Sheets`);
+
+    // Get encrypted Google OAuth token from system storage
+    const accessToken = await getValidAccessToken();
+    
+    // Extract sheet ID from URL
+    const sheetIdMatch = sheetUrl.match(/\/spreadsheets\/d\/([a-zA-Z0-9-_]+)/);
+    if (!sheetIdMatch) {
+      return res.status(400).json({ error: 'Invalid Google Sheets URL' });
+    }
+    const sheetId = sheetIdMatch[1];
+
+    // Prepare job data for export
+    const headers = ['Job Title', 'Company', 'Location', 'Date Posted', 'Job URL', 'Description', 'Application Status'];
+    const jobRows = jobs.map(job => [
+      job.title || '',
+      job.company || '',
+      job.location || '',
+      job.datePosted || '',
+      job.url || '',
+      job.description ? job.description.substring(0, 200) + '...' : '',
+      job.applicationStatus || 'Not Applied'
+    ]);
+
+    // Check if sheet has data and append appropriately
+    const existingDataResponse = await fetch(
+      `https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values/Sheet1!A1:Z1000`,
+      {
+        headers: { 'Authorization': `Bearer ${accessToken}` }
+      }
+    );
+
+    let shouldAddHeaders = true;
+    if (existingDataResponse.ok) {
+      const existingData = await existingDataResponse.json();
+      if (existingData.values && existingData.values.length > 0) {
+        shouldAddHeaders = false; // Headers already exist
+      }
+    }
+
+    // Prepare data to append
+    const dataToAppend = shouldAddHeaders ? [headers, ...jobRows] : jobRows;
+
+    // Append data to the sheet
+    const appendResponse = await fetch(
+      `https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values/Sheet1!A1:append?valueInputOption=USER_ENTERED`,
+      {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${accessToken}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          values: dataToAppend
+        })
+      }
+    );
+
+    if (!appendResponse.ok) {
+      const errorText = await appendResponse.text();
+      console.error('❌ Failed to append data:', appendResponse.status, errorText);
+      
+      let errorMessage = `Failed to export to sheet (${appendResponse.status})`;
+      if (appendResponse.status === 403) {
+        errorMessage = 'Access denied. Please ensure your sheet is set to "Anyone with the link can edit".';
+      } else if (appendResponse.status === 404) {
+        errorMessage = 'Sheet not found. Please check the URL is correct.';
+      }
+
+      return res.status(appendResponse.status).json({
+        success: false,
+        error: errorMessage
+      });
+    }
+
+    console.log(`✅ Successfully exported ${jobs.length} jobs to Google Sheets`);
+
+    res.json({
+      success: true,
+      exportedCount: jobs.length,
+      message: `${jobs.length} jobs exported successfully`
+    });
+
+  } catch (error) {
+    console.error('❌ Error exporting to Google Sheets:', error);
+    res.status(500).json({ 
+      success: false,
+      error: 'Failed to export to Google Sheets', 
+      details: error.message 
+    });
+  }
+});
+
 // Store Google OAuth token securely in system storage
 app.post('/api/system/google-oauth-token', authenticateToken, async (req, res) => {
   try {

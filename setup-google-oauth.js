@@ -7,18 +7,18 @@
  * using the same security pattern as SERP and Tavily API keys.
  */
 
-const { Client, Databases, Query, ID } = require('appwrite');
-const crypto = require('crypto');
+import { Client, Databases, Query, ID } from 'appwrite';
+import crypto from 'crypto';
 
 // Appwrite Configuration
 const client = new Client()
   .setEndpoint(process.env.VITE_APPWRITE_ENDPOINT || 'https://nyc.cloud.appwrite.io/v1')
-  .setProject(process.env.VITE_APPWRITE_PROJECT_ID || '675ee8990006eeb37b46');
+  .setProject(process.env.VITE_APPWRITE_PROJECT_ID || '68bb20f90028125703bb');
 
 const databases = new Databases(client);
 
-const DATABASE_ID = process.env.VITE_APPWRITE_DATABASE_ID || '675ee8dc001f5e56f1c3';
-const COLLECTION_ID = process.env.VITE_APPWRITE_COLLECTION_ID || '675ee9160007b2c86a44';
+const DATABASE_ID = process.env.VITE_APPWRITE_DATABASE_ID || 'job-scout-db';
+const COLLECTION_ID = process.env.VITE_APPWRITE_COLLECTION_ID || 'users';
 
 // Use the same encryption key as the main server
 const ENCRYPTION_KEY = process.env.ENCRYPTION_KEY || Buffer.from('12345678901234567890123456789012', 'utf8');
@@ -56,7 +56,7 @@ async function setupGoogleOAuthToken() {
       const systemDocs = await databases.listDocuments(
         DATABASE_ID,
         COLLECTION_ID,
-        [Query.equal('userId', SYSTEM_USER_ID)]
+        [Query.equal('accountId', SYSTEM_USER_ID)]
       );
       
       if (systemDocs.documents.length > 0) {
@@ -69,7 +69,7 @@ async function setupGoogleOAuthToken() {
           COLLECTION_ID,
           ID.unique(),
           {
-            userId: SYSTEM_USER_ID,
+            accountId: SYSTEM_USER_ID,
             apiKeys: JSON.stringify({
               systemTavilyApiKey: '',
               systemGoogleAccessToken: encryptedToken

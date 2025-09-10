@@ -903,11 +903,13 @@ async function getSystemApiKey(provider) {
 // Helper function to get valid Google Sheets API access token
 async function getValidAccessToken() {
   try {
-    // For now, use the app-level Google OAuth token from environment
-    const accessToken = process.env.GOOGLE_ACCESS_TOKEN;
+    // Use backend-specific Google OAuth token
+    const accessToken = process.env.GOOGLE_ACCESS_TOKEN || process.env.APP_GOOGLE_ACCESS_TOKEN;
     
     if (!accessToken) {
       console.error('❌ No Google access token found in environment variables');
+      console.error('❌ Expected GOOGLE_ACCESS_TOKEN or APP_GOOGLE_ACCESS_TOKEN to be set');
+      console.error('❌ Available env vars:', Object.keys(process.env).filter(key => key.includes('GOOGLE')));
       throw new Error('Google access token not configured');
     }
     

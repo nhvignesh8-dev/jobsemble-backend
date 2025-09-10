@@ -900,6 +900,25 @@ async function getSystemApiKey(provider) {
   }
 }
 
+// Helper function to get valid Google Sheets API access token
+async function getValidAccessToken() {
+  try {
+    // For now, use the app-level Google OAuth token from environment
+    const accessToken = process.env.GOOGLE_ACCESS_TOKEN;
+    
+    if (!accessToken) {
+      console.error('❌ No Google access token found in environment variables');
+      throw new Error('Google access token not configured');
+    }
+    
+    console.log('✅ Using Google access token for Sheets API');
+    return accessToken;
+  } catch (error) {
+    console.error('❌ Error getting Google access token:', error);
+    throw error;
+  }
+}
+
 // Helper function to get Tavily account usage from their API
 async function getTavilyAccountUsage(apiKey) {
   try {

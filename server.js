@@ -1093,20 +1093,32 @@ async function incrementApiUsage(userId, provider) {
 async function getSystemApiKey(provider) {
   try {
     const SYSTEM_USER_ID = 'SYSTEM_API_KEYS';
+    const SYSTEM_KEYS_DOC_ID = '68c1d918601d5f9f7958'; // New system keys document
     
-    // Find the system profile document
-    const systemDocs = await databases.listDocuments(
-      DATABASE_ID,
-      COLLECTION_ID,
-      [Query.equal('accountId', SYSTEM_USER_ID)]
-    );
+    let systemDoc;
+    
+    if (provider === 'google') {
+      // For Google token, use the original system document (has the large Service Account)
+      const systemDocs = await databases.listDocuments(
+        DATABASE_ID,
+        COLLECTION_ID,
+        [Query.equal('accountId', SYSTEM_USER_ID)]
+      );
 
-    if (systemDocs.documents.length === 0) {
-      console.log(`❌ System API keys profile not found`);
-      return null;
+      if (systemDocs.documents.length === 0) {
+        console.log(`❌ System Google token profile not found`);
+        return null;
+      }
+      systemDoc = systemDocs.documents[0];
+    } else {
+      // For SERP/Tavily keys, use the new system keys document
+      try {
+        systemDoc = await databases.getDocument(DATABASE_ID, COLLECTION_ID, SYSTEM_KEYS_DOC_ID);
+      } catch (error) {
+        console.log(`❌ System API keys document not found:`, error.message);
+        return null;
+      }
     }
-
-    const systemDoc = systemDocs.documents[0];
     
     // Get API keys
     let apiKeys = {};
@@ -1130,6 +1142,21 @@ async function getSystemApiKey(provider) {
         return decryptedKey;
       } catch (error) {
         console.error(`❌ Failed to decrypt system Tavily API key:`, error.message);
+        return null;
+      }
+    } else if (provider === 'serp') {
+      const encryptedKey = apiKeys.systemSerpApiKey;
+      if (!encryptedKey) {
+        console.log(`❌ System SERP API key not found in database`);
+        return null;
+      }
+      
+      try {
+        const decryptedKey = decrypt(encryptedKey);
+        console.log(`✅ System SERP API key retrieved from database`);
+        return decryptedKey;
+      } catch (error) {
+        console.error(`❌ Failed to decrypt system SERP API key:`, error.message);
         return null;
       }
     } else if (provider === 'google') {
@@ -2375,30 +2402,8 @@ app.post('/api/read-sheet', authenticateToken, async (req, res) => {
     const valuesData = await valuesResponse.json();
     const rawData = valuesData.values || [];
 
-    // Process raw data into job objects
-    const jobs = [];
-    const headers = rawData.length > 0 ? rawData[0] : [];
-    
-    if (rawData.length > 1) {
-      // Skip header row, process data rows
-      for (let i = 1; i < rawData.length; i++) {
-        const row = rawData[i];
-        if (row && row.length > 0 && row[0]) { // Skip empty rows
-          const job = {};
-          headers.forEach((header, index) => {
-            if (header && row[index] !== undefined) {
-              job[header] = row[index];
-            }
-          });
-          jobs.push(job);
-        }
-      }
-    }
-
-    console.log(`📊 Processed ${jobs.length} jobs from ${rawData.length} rows`);
-
-    // Keep response shape aligned with frontend expectations
-    return res.json({ success: true, rawData, jobs, headers });
+    // Return raw data only - let frontend handle processing
+    return res.json({ success: true, rawData });
   } catch (error) {
     console.error('Error reading sheet:', error);
     return res.status(500).json({ success: false, error: 'Internal server error' });

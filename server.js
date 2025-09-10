@@ -268,32 +268,27 @@ async function authenticateToken(req, res, next) {
     const decoded = jwt.verify(token, JWT_SECRET);
     const userId = decoded.userId;
     
-    // Check if user has an active session
+    // Check if user has an active session (handle server restarts gracefully)
     const activeSession = activeSessions.get(userId);
     
     if (!activeSession) {
-      console.log(`🚫 No active session found for user ${userId}`);
-      return res.status(401).json({ 
-        error: 'Session expired', 
-        code: 'SESSION_EXPIRED',
-        message: 'Please log in again' 
+      // Server restart or new session - create one instead of rejecting
+      console.log(`🔄 No active session in memory for user ${userId}, creating new session (server restart handled)`);
+      const sessionId = crypto.randomBytes(16).toString('hex');
+      const now = Date.now();
+      
+      activeSessions.set(userId, {
+        sessionId: sessionId,
+        token: token,
+        issuedAt: now,
+        lastActive: now,
+        userAgent: req.get('User-Agent') || 'Unknown'
       });
+    } else {
+      // Update last active time for existing session
+      activeSession.lastActive = Date.now();
+      activeSessions.set(userId, activeSession);
     }
-    
-    // Verify the token matches the active session
-    if (activeSession.token !== token) {
-      console.log(`🚫 Token mismatch for user ${userId} - session invalidated from another device`);
-      activeSessions.delete(userId); // Clean up invalid session
-      return res.status(401).json({ 
-        error: 'Session invalidated', 
-        code: 'SESSION_INVALIDATED',
-        message: 'You have been logged out because you signed in from another device' 
-      });
-    }
-    
-    // Update last active time
-    activeSession.lastActive = Date.now();
-    activeSessions.set(userId, activeSession);
     
     req.user = decoded;
     next();
@@ -1315,6 +1310,83 @@ app.get('/api/usage/:provider', authenticateToken, async (req, res) => {
   }
 });
 
+// Simple CORS Proxy for SERP API - minimal processing
+app.post('/api/proxy/serp-cors', authenticateToken, apiRateLimit, async (req, res) => {
+  try {
+    const { query, num, start, tbs } = req.body;
+    
+    // Get user's SERP API key
+    const apiKeyInfo = await getUserApiKey(req.user.userId, 'serp');
+    if (!apiKeyInfo || !apiKeyInfo.apiKey) {
+      return res.status(400).json({ error: 'SERP API key not found' });
+    }
+    
+    const apiKey = apiKeyInfo.apiKey;
+    
+    // Simple API call - no processing
+    const params = new URLSearchParams({
+      api_key: apiKey,
+      engine: 'google',
+      q: query,
+      num: num || '10',
+      start: start || '0'
+    });
+    
+    if (tbs) {
+      params.append('tbs', tbs);
+    }
+    
+    console.log(`🔗 [CORS PROXY] Forwarding SERP API call: ${query}`);
+    
+    const serpResponse = await axios.get(`https://serpapi.com/search?${params}`, {
+      timeout: 30000
+    });
+    
+    // Return raw results - no processing
+    res.json(serpResponse.data);
+    
+  } catch (error) {
+    console.error('SERP CORS proxy error:', error.message);
+    res.status(500).json({ error: 'SERP API call failed' });
+  }
+});
+
+// Simple CORS Proxy for Tavily API - minimal processing  
+app.post('/api/proxy/tavily-cors', authenticateToken, apiRateLimit, async (req, res) => {
+  try {
+    const { query, search_depth, max_results } = req.body;
+    
+    // Get user's Tavily API key
+    const apiKeyInfo = await getUserApiKey(req.user.userId, 'tavily');
+    if (!apiKeyInfo || !apiKeyInfo.apiKey) {
+      return res.status(400).json({ error: 'Tavily API key not found' });
+    }
+    
+    const apiKey = apiKeyInfo.apiKey;
+    
+    console.log(`🔗 [CORS PROXY] Forwarding Tavily API call: ${query}`);
+    
+    const tavilyResponse = await axios.post('https://api.tavily.com/search', {
+      api_key: apiKey,
+      query: query,
+      search_depth: search_depth || 'basic',
+      include_answer: false,
+      include_images: false,
+      include_raw_content: false,
+      max_results: max_results || 20
+    }, {
+      timeout: 30000
+    });
+    
+    // Return raw results - no processing
+    res.json(tavilyResponse.data);
+    
+  } catch (error) {
+    console.error('Tavily CORS proxy error:', error.message);
+    res.status(500).json({ error: 'Tavily API call failed' });
+  }
+});
+
 // Job Search Proxy - handles individual job board searches
 app.post('/api/proxy/search-jobs', authenticateToken, jobSearchRateLimit, async (req, res) => {
   try {
@@ -1621,291 +1693,37 @@ app.post('/api/proxy/search-jobs', authenticateToken, jobSearchRateLimit, async 
       
       console.log(`📊 [SERP DEBUG] Total organic results collected: ${allOrganicResults.length}`);
       
-      // Debug: Log first result to see available fields
-      if (allOrganicResults.length > 0) {
-        console.log(`🔍 Sample SERP result fields:`, Object.keys(allOrganicResults[0]));
-        console.log(`🔍 Sample SERP result:`, JSON.stringify(allOrganicResults[0], null, 2));
-      }
-      
-      searchResults = allOrganicResults.map(result => {
-        const cleanTitle = cleanJobTitle(result.title, 'serp', jobBoard);
-        
-        // Try to extract date from various possible fields
-        let datePosted = 'Recently';
-        if (result.date) {
-          datePosted = result.date;
-        } else if (result.displayed_link && result.displayed_link.includes('•')) {
-          // Sometimes dates appear in the displayed link like "company.com › careers › 2 days ago"
-          const parts = result.displayed_link.split('•');
-          const lastPart = parts[parts.length - 1]?.trim();
-          if (lastPart && (lastPart.includes('ago') || lastPart.includes('day') || lastPart.includes('hour'))) {
-            datePosted = lastPart;
-          }
+      // Return raw results for frontend processing (minimal backend processing)
+      searchResults = allOrganicResults.map(result => ({
+        title: result.title || '',
+        company: '', // Let frontend extract company
+        location: location,
+        url: result.link || '',
+        description: result.snippet || '',
+        datePosted: result.date || 'Recently',
+        source: jobBoard,
+        // Include raw data for frontend processing
+        rawData: {
+          title: result.title,
+          link: result.link,
+          snippet: result.snippet,
+          date: result.date,
+          displayed_link: result.displayed_link
         }
-        
-        return {
-          title: cleanTitle,
-          company: extractCompanyFromUrl(result.link) || extractCompanyFromJobBoard(jobBoard),
-          location: location,
-          url: result.link,
-          description: result.snippet || '',
-          datePosted: datePosted,
-          source: jobBoard
-        };
-      });
+      }));
+      
+      console.log(`🔗 [CORS PROXY] Returning ${searchResults.length} raw SERP results for frontend processing`);
     }
 
-    // Filter out results that don't look like jobs
-    console.log(`📊 [FILTER DEBUG] Before filtering: ${searchResults.length} results`);
+    // Minimal filtering - let frontend handle all processing
+    console.log(`📊 [BACKEND DEBUG] Returning ${searchResults.length} raw results for frontend processing`);
+    
+    // Only basic validation - frontend will do all the heavy processing
     searchResults = searchResults.filter(job => {
-      if (!job.title || !job.url || job.title.length < 3) {
-        console.log(`❌ Filtering out: missing title/url or too short`);
-        return false;
-      }
-      
-      // Additional check: if title is empty after cleaning, filter it out
-      if (!job.title.trim()) {
-        console.log(`❌ Filtering out: empty title after cleaning`);
-        return false;
-      }
-      
-      const titleLower = job.title.toLowerCase();
-      
-      // Filter out generic/non-job titles
-      const badPatterns = [
-        'error', 'not found', '404', 'page not found',
-        'careers home', 'job search', 'apply now',
-        'open roles', 'all jobs', 'browse jobs',
-        'fearless careers', 'job application for',
-        'career opportunities', 'join our team',
-        'company careers', 'job boards',
-        // Tavily-specific bad patterns
-        'salary', 'glassdoor', 'indeed.com', 'linkedin',
-        'jobs in united states', 'now hiring', 'employment',
-        'software engineer greenhouse jobs', 'greenhouse software jobs',
-        'greenhouse software software engineer',
-        '$', 'k-$', 'remote job', 'jobs (now hiring)',
-        /^(remote)$/i,
-        /^(hiring)$/i,
-        /^(jobs)$/i,
-        /^(careers)$/i,
-        /^(apply)$/i,
-        /^(open roles?)$/i,
-        /salary.*\$.*k/i,
-        /\$\d+k?-\$\d+k?/i,
-        /jobs.*indeed/i,
-        /jobs.*linkedin/i,
-        /jobs.*glassdoor/i,
-        /greenhouse software.*jobs/i,
-        /\d+.*jobs.*united states/i
-      ];
-      
-      for (const pattern of badPatterns) {
-        if (typeof pattern === 'string' && titleLower.includes(pattern)) {
-          console.log(`❌ Filtering out generic title: "${job.title}"`);
-          return false;
-        } else if (pattern instanceof RegExp && pattern.test(titleLower)) {
-          console.log(`❌ Filtering out generic title: "${job.title}"`);
-          return false;
-        }
-      }
-      
-      // Job board-specific filtering logic
-      const jobBoardLower = jobBoard.toLowerCase();
-      
-      // GREENHOUSE-SPECIFIC FILTERING (both SERP and Tavily)
-      if (jobBoardLower === 'greenhouse') {
-        const url = job.url.toLowerCase();
-        
-        // Filter out URLs that are not actual job postings
-        const badUrlPatterns = [
-          'glassdoor.com', 'indeed.com', 'linkedin.com', 'levels.fyi',
-          'salary.com', 'ziprecruiter.com', 'glassdoor', 'reddit.com',
-          'github.com', 'careers.zoom.us', 'careers.point72.com'
-        ];
-        
-        for (const badUrl of badUrlPatterns) {
-          if (url.includes(badUrl)) {
-            console.log(`❌ Filtering out bad URL: "${job.title}" from ${badUrl}`);
-            return false;
-          }
-        }
-        
-        // Enhanced Greenhouse filtering - Remove generic and irrelevant results (both SERP and Tavily)
-        const greenhouseGenericPatterns = [
-          /^greenhouse\s+jobs$/i,
-          /^jobs\s+at\s+.+\s*-\s*greenhouse\s+software$/i,
-          /^jobs\s+at\s+.+$/i, // This will catch "Jobs at Remote", "Jobs at Company", etc.
-          /^apply\s*-\s*my$/i,
-          /^n26\s+jobs$/i,
-          /^ai\s+training\s+for\s+.+\s+writers?$/i,
-          /careers?\s*&?\s*job\s*openings?/i,
-          /the\s+leader\s+in/i,
-          /join\s+our\s+team/i,
-          /career\s+opportunities/i,
-          /greenhouse\s+software$/i,
-          /embed$/i,
-          /^management\s+consultant\s*-\s*experienced\s+at$/i,
-          /\s+at\s*$/i
-        ];
-        
-        // Additional SERP-specific Greenhouse patterns
-        if (provider === 'serp') {
-          greenhouseGenericPatterns.push(
-            /careers?\s*&?\s*job\s*openings?\s*-\s*.+/i,
-            /- starpower$/i,
-            /at two six/i,
-            /at faraday/i,
-            /at id\.me/i,
-            /- about/i,
-            /nextiva careers/i,
-            /- the leader in/i,
-            /- careers$/i,
-            /- - careers$/i
-          );
-        }
-        
-        for (const pattern of greenhouseGenericPatterns) {
-          if (pattern.test(titleLower)) {
-            console.log(`❌ Filtering out generic ${provider.toUpperCase()} Greenhouse career page: "${job.title}"`);
-            return false;
-          }
-        }
-        
-        // Prefer actual greenhouse job board URLs
-        if (url.includes('boards.greenhouse.io')) {
-          console.log(`✅ Prioritizing Greenhouse job: "${job.title}" at ${job.company}`);
-          return true;
-        }
-        
-        // Filter out results that don't seem to be actual job postings
-        if (titleLower.includes('greenhouse') && !url.includes('boards.greenhouse.io')) {
-          console.log(`❌ Filtering out generic Greenhouse reference: "${job.title}"`);
-          return false;
-        }
-      }
-      
-      
-      // INDEED-SPECIFIC FILTERING
-      if (jobBoardLower === 'indeed') {
-        const url = job.url.toLowerCase();
-        
-        // Indeed-specific bad patterns
-        const indeedBadPatterns = [
-          /^upload your resume$/i,
-          /^indeed jobs$/i,
-          /^find jobs$/i,
-          /^post your resume$/i,
-          /^sign in to indeed$/i,
-          /^indeed career guide$/i,
-          /salary.*indeed/i,
-          /reviews.*indeed/i,
-          /^indeed salary$/i,
-          /^company reviews$/i
-        ];
-        
-        for (const pattern of indeedBadPatterns) {
-          if (pattern.test(titleLower)) {
-            console.log(`❌ Filtering out generic ${provider.toUpperCase()} Indeed page: "${job.title}"`);
-            return false;
-          }
-        }
-      }
-      
-      // LINKEDIN-SPECIFIC FILTERING  
-      if (jobBoardLower === 'linkedin') {
-        const url = job.url.toLowerCase();
-        
-        // LinkedIn-specific bad patterns
-        const linkedinBadPatterns = [
-          /^linkedin$/i,
-          /^sign in.*linkedin$/i,
-          /^join linkedin$/i,
-          /^professional profiles$/i,
-          /^linkedin learning$/i,
-          /^networking on linkedin$/i,
-          /salary insights.*linkedin/i,
-          /^linkedin premium$/i,
-          /^people also viewed$/i
-        ];
-        
-        for (const pattern of linkedinBadPatterns) {
-          if (pattern.test(titleLower)) {
-            console.log(`❌ Filtering out generic ${provider.toUpperCase()} LinkedIn page: "${job.title}"`);
-            return false;
-          }
-        }
-      }
-      
-      // WORKDAY-SPECIFIC FILTERING
-      if (jobBoardLower === 'workday') {
-        const url = job.url.toLowerCase();
-        
-        // Workday-specific bad patterns
-        const workdayBadPatterns = [
-          /^workday$/i,
-          /^sign in.*workday$/i,
-          /^workday careers$/i,
-          /^workday job search$/i,
-          /^browse jobs.*workday$/i,
-          /^workday application$/i
-        ];
-        
-        for (const pattern of workdayBadPatterns) {
-          if (pattern.test(titleLower)) {
-            console.log(`❌ Filtering out generic ${provider.toUpperCase()} Workday page: "${job.title}"`);
-            return false;
-          }
-        }
-      }
-      
-      // LEVER-SPECIFIC FILTERING
-      if (jobBoardLower === 'lever') {
-        const url = job.url.toLowerCase();
-        
-        // Lever-specific bad patterns
-        const leverBadPatterns = [
-          /^lever$/i,
-          /^jobs.*lever$/i,
-          /^lever careers$/i,
-          /^current openings$/i,
-          /^all jobs.*lever$/i
-        ];
-        
-        for (const pattern of leverBadPatterns) {
-          if (pattern.test(titleLower)) {
-            console.log(`❌ Filtering out generic ${provider.toUpperCase()} Lever page: "${job.title}"`);
-            return false;
-          }
-        }
-      }
-      
-      // BAMBOOHR-SPECIFIC FILTERING
-      if (jobBoardLower === 'bamboohr') {
-        const url = job.url.toLowerCase();
-        
-        // BambooHR-specific bad patterns
-        const bamboohrBadPatterns = [
-          /^bamboohr$/i,
-          /^careers.*bamboo$/i,
-          /^job board.*bamboo$/i,
-          /^bamboo.*careers$/i
-        ];
-        
-        for (const pattern of bamboohrBadPatterns) {
-          if (pattern.test(titleLower)) {
-            console.log(`❌ Filtering out generic ${provider.toUpperCase()} BambooHR page: "${job.title}"`);
-            return false;
-          }
-        }
-      }
-      
-      // Keep jobs that look legitimate
-      console.log(`✅ Keeping job: "${job.title}" at ${job.company}`);
-      return true;
+      return job.title && job.url && job.title.length > 3;
     });
     
-    console.log(`📊 [FILTER DEBUG] After filtering: ${searchResults.length} results`);
+    console.log(`📊 [BACKEND DEBUG] After basic filtering: ${searchResults.length} results`);
 
     // Increment usage tracking after successful search (only for freemium/system keys)
     // For Tavily: Only increment if using system key (freemium), not user's own key

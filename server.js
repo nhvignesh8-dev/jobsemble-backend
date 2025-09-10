@@ -72,21 +72,45 @@ function invalidateUserSession(userId, reason = 'New session created') {
   return null;
 }
 
-// Helper function to get valid Google OAuth access token
-async function getValidAccessToken() {
-  // For now, return a placeholder token
-  // In production, this should use the system's Google OAuth credentials
-  // stored securely in environment variables or database
-  const systemGoogleToken = process.env.SYSTEM_GOOGLE_ACCESS_TOKEN;
-  
-  if (!systemGoogleToken) {
-    console.warn('⚠️  System Google OAuth token not configured - Google Sheets features will not work');
-    // Return a placeholder token that will cause a 401 error
-    // This allows the frontend to show a proper error message
+// Helper function to get valid Google OAuth access token from user's database record
+async function getValidAccessToken(userId) {
+  try {
+    // Get user's Google OAuth token from database (same as other API keys)
+    const userDocs = await databases.listDocuments(
+      DATABASE_ID,
+      COLLECTION_ID,
+      [Query.equal('accountId', userId)]
+    );
+
+    if (userDocs.documents.length === 0) {
+      console.warn('⚠️ User profile not found for Google OAuth token');
+      return 'placeholder-google-token';
+    }
+
+    const userProfile = userDocs.documents[0];
+    let apiKeys = {};
+    
+    try {
+      apiKeys = JSON.parse(userProfile.apiKeys || '{}');
+    } catch (e) {
+      apiKeys = {};
+    }
+
+    // Check for Google OAuth access token in user's stored API keys
+    const googleAccessToken = apiKeys.googleAccessToken || apiKeys.googleOAuthToken || apiKeys.google_access_token;
+    
+    if (!googleAccessToken) {
+      console.warn('⚠️ No Google OAuth token found in user database record');
+      console.warn('⚠️ Available keys:', Object.keys(apiKeys));
+      return 'placeholder-google-token';
+    }
+    
+    console.log('✅ Google OAuth token found in database, length:', googleAccessToken.length);
+    return googleAccessToken;
+  } catch (error) {
+    console.error('❌ Error getting Google OAuth token from database:', error);
     return 'placeholder-google-token';
   }
-  
-  return systemGoogleToken;
 }
 
 // Security Middleware
@@ -2241,7 +2265,7 @@ app.post('/api/update-sheet-cell', authenticateToken, async (req, res) => {
     }
 
     const sheetId = sheetIdMatch[1];
-    const accessToken = await getValidAccessToken();
+    const accessToken = await getValidAccessToken(req.user.userId);
 
     // Update the specific cell
     const cellRange = `Sheet1!${column}${row}`;
@@ -2288,7 +2312,7 @@ app.post('/api/load-filters', authenticateToken, async (req, res) => {
     }
 
     const sheetId = sheetIdMatch[1];
-    const accessToken = await getValidAccessToken();
+    const accessToken = await getValidAccessToken(req.user.userId);
 
     // Try to read filters from "Filters" sheet
     const filtersResponse = await fetch(
@@ -2299,12 +2323,12 @@ app.post('/api/load-filters', authenticateToken, async (req, res) => {
     );
 
     if (!filtersResponse.ok) {
-      return res.json({ success: true, jobs: [] }); // Return empty if no Filters sheet
+      return res.json({ success: true, filters: [] }); // Return empty if no Filters sheet
     }
 
     const filtersData = await filtersResponse.json();
     if (!filtersData.values || filtersData.values.length <= 1) {
-      return res.json({ success: true, jobs: [] }); // No filters found
+      return res.json({ success: true, filters: [] }); // No filters found
     }
 
     // Parse filters (skip header row)
@@ -2339,7 +2363,7 @@ app.post('/api/save-filter', authenticateToken, async (req, res) => {
     }
 
     const sheetId = sheetIdMatch[1];
-    const accessToken = await getValidAccessToken();
+    const accessToken = await getValidAccessToken(req.user.userId);
 
     // First, try to read existing filters to see if we need to create the sheet
     const filtersResponse = await fetch(
@@ -2446,6 +2470,13 @@ app.post('/api/save-filter', authenticateToken, async (req, res) => {
     ];
 
     // Write to the Filters sheet
+    console.log('Writing filter data to Google Sheets:', {
+      sheetId,
+      sheetDataLength: sheetData.length,
+      firstRow: sheetData[0],
+      secondRow: sheetData[1]
+    });
+
     const writeResponse = await fetch(
       `https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values/Filters!A1:Z1000?valueInputOption=RAW`,
       {
@@ -2460,11 +2491,17 @@ app.post('/api/save-filter', authenticateToken, async (req, res) => {
       }
     );
 
+    console.log('Write response status:', writeResponse.status);
+    console.log('Write response ok:', writeResponse.ok);
+
     if (!writeResponse.ok) {
       const errorText = await writeResponse.text();
       console.error('Error writing filters to sheet:', errorText);
-      return res.status(500).json({ error: 'Failed to save filter to Google Sheets' });
+      return res.status(500).json({ error: 'Failed to save filter to Google Sheets', details: errorText });
     }
+
+    const writeResult = await writeResponse.json();
+    console.log('Write result:', writeResult);
 
     res.json({ success: true, message: 'Filter saved successfully' });
   } catch (error) {
@@ -2489,7 +2526,7 @@ app.post('/api/read-sheet', authenticateToken, async (req, res) => {
     }
 
     const sheetId = sheetIdMatch[1];
-    const accessToken = await getValidAccessToken();
+    const accessToken = await getValidAccessToken(req.user.userId);
 
     // Read data from the sheet
     const response = await fetch(
@@ -2618,6 +2655,7 @@ app.use((error, req, res, next) => {
 // Start server
 app.listen(PORT, () => {
   console.log(`🔒 Secure API Proxy running on port ${PORT}`);
+  console.log(`🚀 Deployment timestamp: ${new Date().toISOString()}`);
   console.log('🛡️ Security features enabled:');
   console.log('  - Helmet security headers');
   console.log('  - Rate limiting');

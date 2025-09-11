@@ -1048,6 +1048,7 @@ async function incrementApiUsage(userId, provider) {
       const currentCount = apiKeys.tavilyUsageCount || 0;
       apiKeys.tavilyUsageCount = currentCount + 1;
       console.log(`🎯 Tavily usage incremented to ${apiKeys.tavilyUsageCount}/${apiKeys.tavilyUsageLimit || 3}`);
+      console.log(`🔍 [INCREMENT] Before update - apiKeys object:`, JSON.stringify(apiKeys, null, 2));
       
     } else if (provider === 'serp') {
       // Update SERP monthly usage tracking
@@ -1066,7 +1067,7 @@ async function incrementApiUsage(userId, provider) {
     }
 
     // Update the user document
-    await databases.updateDocument(
+    const updateResult = await databases.updateDocument(
       DATABASE_ID,
       COLLECTION_ID,
       userDoc.$id,
@@ -1076,6 +1077,23 @@ async function incrementApiUsage(userId, provider) {
     );
     
     console.log(`✅ ${provider} usage tracking updated for user ${userId}`);
+    console.log(`🔍 [INCREMENT] Database update result:`, updateResult);
+    
+    // Verify the update by reading back the data
+    const verifyDocs = await databases.listDocuments(
+      DATABASE_ID,
+      COLLECTION_ID,
+      [Query.equal('accountId', userId)]
+    );
+    
+    if (verifyDocs.documents.length > 0) {
+      const verifyApiKeys = JSON.parse(verifyDocs.documents[0].apiKeys || '{}');
+      console.log(`🔍 [INCREMENT] Verification - stored apiKeys:`, JSON.stringify(verifyApiKeys, null, 2));
+      if (provider === 'tavily') {
+        console.log(`🔍 [INCREMENT] Verification - tavilyUsageCount: ${verifyApiKeys.tavilyUsageCount}`);
+      }
+    }
+    
     return true;
     
   } catch (error) {
@@ -1378,6 +1396,7 @@ async function getUserApiKey(userId, provider) {
     try {
       apiKeys = userDoc.apiKeys ? JSON.parse(userDoc.apiKeys) : {};
       console.log(`📋 API keys object parsed for ${userId}:`, Object.keys(apiKeys));
+      console.log(`🔍 [GET-API-KEY] Raw apiKeys from database:`, JSON.stringify(apiKeys, null, 2));
     } catch (e) {
       console.log(`❌ Failed to parse API keys for ${userId}:`, e.message);
       return null;

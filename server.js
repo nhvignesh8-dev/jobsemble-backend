@@ -205,13 +205,26 @@ function encrypt(text) {
 function decrypt(encryptedText) {
   if (!encryptedText) return '';
   
-  const [ivHex, encrypted] = encryptedText.split(':');
-  const iv = Buffer.from(ivHex, 'hex');
-  const decipher = crypto.createDecipheriv('aes-256-cbc', ENCRYPTION_KEY_BUFFER, iv);
-  let decrypted = decipher.update(encrypted, 'hex', 'utf8');
-  decrypted += decipher.final('utf8');
-  
-  return decrypted;
+  try {
+    const [ivHex, encrypted] = encryptedText.split(':');
+    console.log(`🔍 [DECRYPT] Input length: ${encryptedText.length}, IV length: ${ivHex?.length}, Encrypted length: ${encrypted?.length}`);
+    
+    const iv = Buffer.from(ivHex, 'hex');
+    const decipher = crypto.createDecipheriv('aes-256-cbc', ENCRYPTION_KEY_BUFFER, iv);
+    let decrypted = decipher.update(encrypted, 'hex', 'utf8');
+    decrypted += decipher.final('utf8');
+    
+    console.log(`✅ [DECRYPT] Successfully decrypted, length: ${decrypted.length}`);
+    return decrypted;
+  } catch (error) {
+    console.error(`❌ [DECRYPT] Failed to decrypt:`, error.message);
+    console.error(`❌ [DECRYPT] Input: ${encryptedText.substring(0, 50)}...`);
+    console.error(`❌ [DECRYPT] ENCRYPTION_KEY_BUFFER length: ${ENCRYPTION_KEY_BUFFER?.length}`);
+    
+    // Try to return the original text if decryption fails (might be unencrypted)
+    console.log(`⚠️ [DECRYPT] Returning original text as fallback`);
+    return encryptedText;
+  }
 }
 
 // Authentication Middleware with Session Validation
@@ -1315,8 +1328,12 @@ app.get('/api/test-tavily-usage/:userId', authenticateToken, async (req, res) =>
       return res.json({ error: 'No API key found for user' });
     }
     
+    console.log(`🧪 [TEST] Raw key from database: ${keyInfo.key.substring(0, 50)}...`);
+    console.log(`🧪 [TEST] Key contains colon (encrypted): ${keyInfo.key.includes(':')}`);
+    
     const decryptedKey = decrypt(keyInfo.key);
     console.log(`🧪 [TEST] Decrypted key length: ${decryptedKey.length}`);
+    console.log(`🧪 [TEST] Decrypted key preview: ${decryptedKey.substring(0, 20)}...`);
     
     const accountData = await getTavilyAccountUsage(decryptedKey);
     console.log(`🧪 [TEST] Account data:`, accountData);

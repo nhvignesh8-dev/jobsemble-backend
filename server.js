@@ -1307,14 +1307,26 @@ async function createJWT(header, payload, privateKey) {
 // Helper function to get Tavily account usage from their API
 async function getTavilyAccountUsage(apiKey) {
   try {
-    // Use the correct /usage endpoint
-    const response = await axios.get('https://api.tavily.com/usage', {
-      headers: {
-        'Authorization': `Bearer ${apiKey}`,
-        'Content-Type': 'application/json'
-      },
-      timeout: 10000
-    });
+    // Try with API key as query parameter first
+    let response;
+    try {
+      response = await axios.get(`https://api.tavily.com/usage?api_key=${apiKey}`, {
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        timeout: 10000
+      });
+    } catch (queryError) {
+      console.log(`⚠️ Query parameter auth failed, trying Bearer token:`, queryError.message);
+      // Fallback to Bearer token authentication
+      response = await axios.get('https://api.tavily.com/usage', {
+        headers: {
+          'Authorization': `Bearer ${apiKey}`,
+          'Content-Type': 'application/json'
+        },
+        timeout: 10000
+      });
+    }
     
     if (response.data) {
       console.log(`✅ Tavily usage data retrieved:`, response.data);

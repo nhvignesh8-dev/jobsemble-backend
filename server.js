@@ -2194,10 +2194,14 @@ app.post('/api/update-sheet-cell', authenticateToken, async (req, res) => {
 // Filter Management Endpoints
 app.post('/api/save-filter', authenticateToken, async (req, res) => {
   try {
+    console.log('💾 [SAVE-FILTER] Received save request');
+    console.log('💾 [SAVE-FILTER] Request body:', req.body);
+    
     const { sheetUrl, filter } = req.body;
     
     if (!sheetUrl || !filter) {
-      return res.status(400).json({ error: 'Missing required fields' });
+      console.error('❌ [SAVE-FILTER] Missing required parameters');
+      return res.status(400).json({ error: 'Missing sheet URL or filter data' });
     }
 
     // Extract sheet ID from URL
@@ -2209,7 +2213,15 @@ app.post('/api/save-filter', authenticateToken, async (req, res) => {
     const sheetId = sheetIdMatch[1];
     const authHeaders = await getGoogleSheetsAuthHeaders();
 
+    if (!authHeaders) {
+      console.error('❌ [SAVE-FILTER] No valid Google access token available');
+      return res.status(400).json({ 
+        error: 'Google Sheets integration not configured. Please contact support.' 
+      });
+    }
+
     // Check if "Filters" sheet exists, create if not
+    console.log('🔍 [SAVE-FILTER] Checking if Filters sheet exists...');
     const sheetsResponse = await fetch(
       `https://sheets.googleapis.com/v4/spreadsheets/${sheetId}?fields=sheets.properties.title`,
       {
@@ -2218,19 +2230,28 @@ app.post('/api/save-filter', authenticateToken, async (req, res) => {
     );
 
     if (!sheetsResponse.ok) {
-      return res.status(500).json({ error: 'Failed to access sheet' });
+      const errorText = await sheetsResponse.text();
+      console.error('❌ [SAVE-FILTER] Cannot access spreadsheet:', errorText);
+      return res.status(400).json({ 
+        error: 'Cannot access spreadsheet. Please check the URL and permissions.', 
+        details: errorText 
+      });
     }
 
     const sheetsData = await sheetsResponse.json();
     const hasFiltersSheet = sheetsData.sheets?.some(sheet => sheet.properties.title === 'Filters');
 
     if (!hasFiltersSheet) {
+      console.log('📝 [SAVE-FILTER] Creating Filters sheet...');
       // Create "Filters" sheet
       const createSheetResponse = await fetch(
         `https://sheets.googleapis.com/v4/spreadsheets/${sheetId}:batchUpdate`,
         {
           method: 'POST',
-          headers: authHeaders,
+          headers: {
+            ...authHeaders,
+            'Content-Type': 'application/json'
+          },
           body: JSON.stringify({
             requests: [{
               addSheet: {
@@ -2245,29 +2266,125 @@ app.post('/api/save-filter', authenticateToken, async (req, res) => {
       );
 
       if (!createSheetResponse.ok) {
-        return res.status(500).json({ error: 'Failed to create Filters sheet' });
+        const errorText = await createSheetResponse.text();
+        console.error('❌ [SAVE-FILTER] Failed to create Filters sheet:', errorText);
+        return res.status(500).json({ 
+          error: 'Failed to create Filters sheet',
+          details: errorText
+        });
       }
+      console.log('✅ [SAVE-FILTER] Filters sheet created successfully');
+    } else {
+      console.log('✅ [SAVE-FILTER] Filters sheet already exists');
     }
 
-    // Frontend should handle data processing - backend only provides auth
-    // Write processed filter data to sheet
+    // Read existing filters
+    console.log('📖 [SAVE-FILTER] Reading existing filters...');
+    const filtersResponse = await fetch(
+      `https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values/Filters!A1:Z1000`,
+      {
+        headers: authHeaders
+      }
+    );
+
+    let existingFilters = [];
+    if (filtersResponse.ok) {
+      const filtersData = await filtersResponse.json();
+      if (filtersData.values && filtersData.values.length > 1) {
+        // Parse existing filters (skip header row)
+        existingFilters = filtersData.values.slice(1).map(row => ({
+          id: row[0],
+          name: row[1],
+          locations: row[2] || '',
+          applicationStatuses: row[3] || '',
+          jobTitleKeywords: row[4] || '',
+          createdAt: row[5] || new Date().toISOString()
+        }));
+      }
+    } else {
+      console.log('📝 [SAVE-FILTER] No existing filters found, starting fresh');
+    }
+
+    // Check if filter already exists (update) or is new (add)
+    const existingFilterIndex = existingFilters.findIndex(f => f.id === filter.id);
+    
+    if (existingFilterIndex >= 0) {
+      console.log('🔄 [SAVE-FILTER] Updating existing filter:', filter.id);
+      // Update existing filter
+      existingFilters[existingFilterIndex] = {
+        id: filter.id,
+        name: filter.name,
+        locations: Array.isArray(filter.locations) ? filter.locations.join(',') : filter.locations || '',
+        applicationStatuses: Array.isArray(filter.applicationStatuses) ? filter.applicationStatuses.join(',') : filter.applicationStatuses || '',
+        jobTitleKeywords: filter.jobTitleKeywords || '',
+        createdAt: existingFilters[existingFilterIndex].createdAt // Keep original creation date
+      };
+    } else {
+      console.log('➕ [SAVE-FILTER] Adding new filter:', filter.id);
+      // Add new filter
+      existingFilters.push({
+        id: filter.id,
+        name: filter.name,
+        locations: Array.isArray(filter.locations) ? filter.locations.join(',') : filter.locations || '',
+        applicationStatuses: Array.isArray(filter.applicationStatuses) ? filter.applicationStatuses.join(',') : filter.applicationStatuses || '',
+        jobTitleKeywords: filter.jobTitleKeywords || '',
+        createdAt: new Date().toISOString()
+      });
+    }
+
+    // Prepare data for writing to sheet
+    const sheetData = [
+      ['ID', 'Name', 'Locations', 'Application Statuses', 'Job Title Keywords', 'Created At'],
+      ...existingFilters.map(f => [
+        f.id,
+        f.name,
+        f.locations,
+        f.applicationStatuses,
+        f.jobTitleKeywords,
+        f.createdAt
+      ])
+    ];
+
+    console.log('📝 [SAVE-FILTER] Writing updated filters to sheet...');
+    console.log('📝 [SAVE-FILTER] Total filters:', existingFilters.length);
+
+    // Write updated filters back to sheet
     const writeResponse = await fetch(
       `https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values/Filters!A1:Z1000?valueInputOption=RAW`,
       {
         method: 'PUT',
-        headers: authHeaders,
-        body: JSON.stringify({ values: filter.processedData })
+        headers: {
+          ...authHeaders,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          values: sheetData
+        })
       }
     );
 
     if (!writeResponse.ok) {
-      return res.status(500).json({ error: 'Failed to save filter' });
+      const errorText = await writeResponse.text();
+      console.error('❌ [SAVE-FILTER] Failed to write filters:', errorText);
+      return res.status(500).json({ 
+        error: 'Failed to save filter to Google Sheets',
+        details: errorText
+      });
     }
 
-    res.json({ success: true, message: 'Filter saved successfully' });
+    const writeResult = await writeResponse.json();
+    console.log('✅ [SAVE-FILTER] Filter saved successfully');
+    console.log('📊 [SAVE-FILTER] Updated cells:', writeResult.updatedCells);
+
+    res.json({ 
+      success: true, 
+      message: 'Filter saved successfully',
+      filterId: filter.id,
+      updatedCells: writeResult.updatedCells
+    });
   } catch (error) {
     console.error('Error saving filter:', error);
-    res.status(500).json({ error: 'Internal server error' });
+    res.status(500).json({ error: 'Failed to save filter' });
   }
 });
 

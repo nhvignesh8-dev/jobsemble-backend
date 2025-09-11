@@ -888,21 +888,33 @@ app.post('/api/proxy/tavily/search', authenticateToken, apiRateLimit, async (req
       return res.status(400).json({ error: 'Search query required' });
     }
 
-    // Get user's encrypted Tavily API key
+    // Get user's API key info
     const userKey = await getUserApiKey(req.user.userId, 'tavily');
     let apiKey;
+    let isUserOwnKey = false;
     
     if (userKey && userKey.isUserKey && userKey.key) {
       // User has their own API key
       console.log(`🔑 Using user's own Tavily API key`);
       apiKey = decrypt(userKey.key);
+      isUserOwnKey = true;
     } else {
-      // User doesn't have their own key, use system key for freemium
-      console.log(`🔑 Using system Tavily API key for freemium user`);
+      // User uses system API key (freemium - 3 searches max)
+      console.log(`🔑 Using system Tavily API key for freemium user (3 searches max)`);
       apiKey = process.env.TAVILY_API_KEY;
       
       if (!apiKey) {
         return res.status(500).json({ error: 'System Tavily API key not configured' });
+      }
+      
+      // Check if user has exceeded their 3 free searches
+      const currentUsage = userKey?.usageCount || 0;
+      if (currentUsage >= 3) {
+        return res.status(429).json({ 
+          error: `You've used all 3 free Tavily searches. Please provide your own Tavily API key to continue.`,
+          usageCount: currentUsage,
+          usageLimit: 3
+        });
       }
     }
 
@@ -922,10 +934,12 @@ app.post('/api/proxy/tavily/search', authenticateToken, apiRateLimit, async (req
       }
     });
 
-    // Track usage for freemium users
-    if (!userKey || !userKey.isUserKey) {
-      console.log(`📊 Tracking freemium usage for user ${req.user.userId}`);
+    // Track usage only for freemium users (using system API key)
+    if (!isUserOwnKey) {
+      console.log(`📊 Tracking freemium usage for user ${req.user.userId} (${(userKey?.usageCount || 0) + 1}/3 searches)`);
       await incrementApiUsage(req.user.userId, 'tavily');
+    } else {
+      console.log(`📊 User has own API key - not tracking usage in system`);
     }
 
     auditLog('tavily_search', req.user.userId, {
@@ -1648,19 +1662,21 @@ app.get('/api/usage/:provider', authenticateToken, async (req, res) => {
           console.log(`⚠️ [USAGE-STATS] Falling back to stored usage data`);
         }
       } else {
-        // User doesn't have their own API key, use system freemium model
-        console.log(`🔍 [USAGE-STATS] User using freemium model, checking usage limits...`);
+        // User doesn't have their own API key, using system freemium model (3 searches max)
+        console.log(`🔍 [USAGE-STATS] User using system API key - freemium model (3 searches max)`);
         
-        // For freemium users, show their individual usage against the 3-search limit
+        const currentUsage = keyInfo?.usageCount || 0;
+        const remainingSearches = Math.max(0, 3 - currentUsage);
+        
         return res.json({
           provider: 'tavily',
           hasApiKey: false,
           usageInfo: {
-            usageCount: keyInfo.usageCount || 0,
-            usageLimit: 3, // Freemium limit
-            hasFreesLeft: (keyInfo.usageCount || 0) < 3,
+            usageCount: currentUsage,
+            usageLimit: 3, // System freemium limit
+            hasFreesLeft: currentUsage < 3,
             isFreemium: true,
-            creditsRemaining: Math.max(0, 3 - (keyInfo.usageCount || 0))
+            creditsRemaining: remainingSearches
           }
         });
       }

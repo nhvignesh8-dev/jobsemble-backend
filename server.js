@@ -1397,13 +1397,16 @@ async function getUserApiKey(userId, provider) {
         return null;
       }
       
-      return {
+      const result = {
         key: key || 'SYSTEM_KEY', // Use system key if user hasn't provided one and still has free uses
         usageCount,
         usageLimit,
         hasFreesLeft: usageCount < usageLimit,
         isUserKey: !!key
       };
+      
+      console.log(`🔍 [GET-API-KEY] Tavily key info for user ${userId}:`, result);
+      return result;
     } else if (provider === 'serp') {
       const key = apiKeys.serpApiKey;
       const currentDate = new Date();
@@ -1503,6 +1506,13 @@ app.get('/api/usage/:provider', authenticateToken, async (req, res) => {
       }
       
       // Fallback to freemium data or default
+      console.log(`📊 [USAGE-STATS] Returning Tavily usage for user ${req.user.userId}:`, {
+        usageCount: keyInfo.usageCount,
+        usageLimit: keyInfo.usageLimit,
+        hasFreesLeft: keyInfo.hasFreesLeft,
+        isUserKey: keyInfo.isUserKey
+      });
+      
       return res.json({
         provider: 'tavily',
         hasApiKey: keyInfo.isUserKey,

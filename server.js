@@ -1503,11 +1503,15 @@ app.get('/api/usage/:provider', authenticateToken, async (req, res) => {
     if (provider === 'tavily') {
       // If user has their own API key, fetch real account usage
       if (keyInfo.isUserKey && keyInfo.key) {
+        console.log(`🔍 [USAGE-STATS] User has API key, fetching real account usage...`);
         try {
           const decryptedKey = decrypt(keyInfo.key);
+          console.log(`🔍 [USAGE-STATS] Decrypted key length: ${decryptedKey.length}`);
           const accountData = await getTavilyAccountUsage(decryptedKey);
+          console.log(`🔍 [USAGE-STATS] Account data received:`, accountData);
           
           if (accountData) {
+            console.log(`✅ [USAGE-STATS] Returning real account data with ${accountData.totalSearchesLeft} searches remaining`);
             return res.json({
               provider: 'tavily',
               hasApiKey: true,
@@ -1520,9 +1524,12 @@ app.get('/api/usage/:provider', authenticateToken, async (req, res) => {
                 planName: accountData.planName
               }
             });
+          } else {
+            console.log(`⚠️ [USAGE-STATS] Account data is null, falling back to stored data`);
           }
         } catch (error) {
           console.error(`❌ Failed to get Tavily account data:`, error.message);
+          console.log(`⚠️ [USAGE-STATS] Falling back to stored usage data`);
         }
       }
       
@@ -1541,7 +1548,8 @@ app.get('/api/usage/:provider', authenticateToken, async (req, res) => {
           usageCount: keyInfo.usageCount,
           usageLimit: keyInfo.usageLimit,
           hasFreesLeft: keyInfo.hasFreesLeft,
-          isFreemium: !keyInfo.isUserKey
+          isFreemium: !keyInfo.isUserKey,
+          creditsRemaining: keyInfo.isUserKey ? (keyInfo.usageLimit - keyInfo.usageCount) : undefined
         }
       });
     } else if (provider === 'serp') {

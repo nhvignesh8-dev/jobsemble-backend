@@ -1321,13 +1321,44 @@ app.get('/api/test-tavily-usage/:userId', authenticateToken, async (req, res) =>
     const accountData = await getTavilyAccountUsage(decryptedKey);
     console.log(`🧪 [TEST] Account data:`, accountData);
     
+    // Test if the API key works with a simple search
+    let testSearchResult = null;
+    try {
+      console.log(`🧪 [TEST] Testing API key with search call...`);
+      const testResponse = await axios.post('https://api.tavily.com/search', {
+        api_key: decryptedKey,
+        query: 'test',
+        search_depth: 'basic',
+        include_answer: false,
+        include_images: false,
+        include_raw_content: false,
+        max_results: 1
+      }, {
+        timeout: 10000,
+        headers: {
+          'Content-Type': 'application/json'
+        }
+      });
+      testSearchResult = { success: true, data: testResponse.data };
+      console.log(`🧪 [TEST] Search test successful`);
+    } catch (searchError) {
+      testSearchResult = { 
+        success: false, 
+        error: searchError.message,
+        status: searchError.response?.status,
+        data: searchError.response?.data
+      };
+      console.log(`🧪 [TEST] Search test failed:`, searchError.message);
+    }
+    
     res.json({
       success: true,
       keyInfo: {
         isUserKey: keyInfo.isUserKey,
         keyLength: decryptedKey.length
       },
-      accountData
+      accountData,
+      testSearchResult
     });
   } catch (error) {
     console.error(`❌ [TEST] Error:`, error.message);
@@ -1580,6 +1611,8 @@ app.get('/api/usage/:provider', authenticateToken, async (req, res) => {
         } catch (error) {
           console.error(`❌ Failed to get Tavily account data:`, error.message);
           console.error(`❌ Error details:`, error.response?.data || error.stack);
+          console.error(`❌ Error status:`, error.response?.status);
+          console.error(`❌ Error headers:`, error.response?.headers);
           console.log(`⚠️ [USAGE-STATS] Falling back to stored usage data`);
         }
       }

@@ -2620,6 +2620,127 @@ app.post('/api/delete-filter', authenticateToken, async (req, res) => {
   }
 });
 
+// Replace sheet data endpoint (for duplicate removal)
+app.post('/api/replace-sheet-data', authenticateToken, async (req, res) => {
+  try {
+    const { sheetUrl, jobs } = req.body;
+    
+    if (!sheetUrl || !jobs || !Array.isArray(jobs)) {
+      return res.status(400).json({ error: 'Sheet URL and jobs data are required' });
+    }
+
+    // Extract sheet ID from URL
+    const sheetIdMatch = sheetUrl.match(/\/spreadsheets\/d\/([a-zA-Z0-9-_]+)/);
+    if (!sheetIdMatch) {
+      return res.status(400).json({ error: 'Invalid Google Sheets URL' });
+    }
+    const sheetId = sheetIdMatch[1];
+
+    // Get Google access token using cloud-backend's auth method
+    console.log(`🔗 [REPLACE] Getting Google access token for user: ${req.user.userId}`);
+    const authHeaders = await getGoogleSheetsAuthHeaders();
+    
+    if (!authHeaders) {
+      console.log(`❌ [REPLACE] Failed to get Google access token for user: ${req.user.userId}`);
+      return res.status(400).json({ error: 'Google Sheets integration not configured. Please contact support.' });
+    }
+    
+    console.log(`✅ [REPLACE] Google access token obtained successfully`);
+
+    // Prepare data for replacement
+    const headers = ['Job Title', 'Company', 'Location', 'Job URL', 'Application Status', 'Date Posted', 'Source'];
+    const jobRows = jobs.map(job => [
+      job.title || '',
+      job.company || '',
+      job.location || '',
+      job.url || '',
+      job.applicationStatus || 'Not Applied',
+      job.datePosted || '',
+      job.source || ''
+    ]);
+    const dataToReplace = [headers, ...jobRows];
+
+    // First, check if we can access the sheet
+    console.log(`🔍 [REPLACE] Checking sheet access for: ${sheetId}`);
+    try {
+      const testResponse = await fetch(
+        `https://sheets.googleapis.com/v4/spreadsheets/${sheetId}?fields=properties.title`,
+        {
+          headers: authHeaders
+        }
+      );
+      
+      if (!testResponse.ok) {
+        const errorText = await testResponse.text();
+        console.error('❌ [REPLACE] Cannot access sheet:', errorText);
+        return res.status(400).json({ 
+          error: 'Cannot access your Google Sheet. Please ensure the service account has Editor access to the sheet.' 
+        });
+      }
+      
+      const testData = await testResponse.json();
+      console.log(`✅ [REPLACE] Sheet access confirmed: ${testData.properties?.title || 'Unknown'}`);
+    } catch (accessError) {
+      console.error('❌ [REPLACE] Cannot access sheet:', accessError.message);
+      return res.status(400).json({ 
+        error: 'Cannot access your Google Sheet. Please ensure the service account has Editor access to the sheet.' 
+      });
+    }
+
+    // Replace all data in the sheet
+    const range = 'A1:Z1000'; // Large range to clear existing data
+    console.log(`🔗 [REPLACE] Replacing sheet data:`, {
+      sheetId: sheetId,
+      range: range,
+      dataRows: dataToReplace.length,
+      jobsCount: jobs.length
+    });
+    
+    try {
+      const response = await fetch(
+        `https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values/${range}?valueInputOption=RAW`,
+        {
+          method: 'PUT',
+          headers: {
+            ...authHeaders,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            values: dataToReplace
+          })
+        }
+      );
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        console.error('❌ [REPLACE] Google Sheets API error:', errorText);
+        return res.status(400).json({ 
+          error: 'Failed to replace Google Sheets data. Please ensure the service account has Editor access to the sheet.' 
+        });
+      }
+
+      const result = await response.json();
+      console.log(`✅ [REPLACE] Successfully replaced sheet data with ${jobs.length} jobs`);
+      res.json({ 
+        success: true, 
+        message: `Successfully replaced sheet data with ${jobs.length} jobs`,
+        replacedCount: jobs.length,
+        updatedCells: result.updatedCells
+      });
+    } catch (sheetsError) {
+      console.error('❌ [REPLACE] Google Sheets API error:', sheetsError.message);
+      return res.status(400).json({ 
+        error: 'Failed to replace Google Sheets data. Please ensure the service account has Editor access to the sheet.' 
+      });
+    }
+
+  } catch (error) {
+    console.error('Replace sheet data error:', error);
+    const errorMessage = error.response?.data?.error?.message || error.message || 'Replace failed';
+    res.status(500).json({ error: 'Failed to replace sheet data', details: errorMessage });
+  }
+});
+
 // Error handler
 app.use((error, req, res, next) => {
   console.error('Unhandled error:', error);

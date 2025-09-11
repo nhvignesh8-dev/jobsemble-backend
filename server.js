@@ -1690,20 +1690,27 @@ app.post('/api/proxy/search-jobs', authenticateToken, jobSearchRateLimit, async 
       }
     }
 
-    // Decrypt the API key (or use system key for Tavily freemium)
+    // Decrypt the API key (same method as usage stats endpoint)
     let apiKey;
-    if (provider === 'tavily' && keyInfo.key === 'SYSTEM_KEY') {
-      // Use encrypted system Tavily API key from database
-      apiKey = await getSystemApiKey('tavily');
-      if (!apiKey) {
-        console.error('❌ System Tavily API key not found in database');
-        return res.status(500).json({ 
-          error: 'System Tavily API key not configured. Please contact administrator.',
-          code: 'MISSING_SYSTEM_API_KEY'
-        });
+    if (provider === 'tavily') {
+      if (keyInfo.isUserKey && keyInfo.key) {
+        // User has their own API key - decrypt it (same as usage stats)
+        apiKey = decrypt(keyInfo.key);
+        console.log(`🔑 Using user's Tavily API key for ${req.user.userId}`);
+      } else {
+        // Use system key for freemium users
+        apiKey = await getSystemApiKey('tavily');
+        if (!apiKey) {
+          console.error('❌ System Tavily API key not found in database');
+          return res.status(500).json({ 
+            error: 'System Tavily API key not configured. Please contact administrator.',
+            code: 'MISSING_SYSTEM_API_KEY'
+          });
+        }
+        console.log(`🆓 Using system Tavily API key for freemium user ${req.user.userId} (${keyInfo.usageCount + 1}/${keyInfo.usageLimit})`);
       }
-      console.log(`🆓 Using encrypted system Tavily API key for freemium user ${req.user.userId} (${keyInfo.usageCount + 1}/${keyInfo.usageLimit})`);
     } else {
+      // SERP API
       apiKey = decrypt(keyInfo.key);
     }
 

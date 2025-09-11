@@ -1491,6 +1491,8 @@ app.get('/api/usage/:provider', authenticateToken, async (req, res) => {
     }
     
     if (!keyInfo) {
+      console.log(`❌ [USAGE-STATS] No keyInfo found for user ${req.user.userId}, provider ${provider}`);
+      console.log(`🔍 [USAGE-STATS] This means getUserApiKey returned null`);
       return res.json({
         provider,
         hasApiKey: false,

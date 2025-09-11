@@ -890,12 +890,21 @@ app.post('/api/proxy/tavily/search', authenticateToken, apiRateLimit, async (req
 
     // Get user's encrypted Tavily API key
     const userKey = await getUserApiKey(req.user.userId, 'tavily');
-    if (!userKey) {
-      return res.status(404).json({ error: 'Tavily API key not found' });
+    let apiKey;
+    
+    if (userKey && userKey.isUserKey && userKey.key) {
+      // User has their own API key
+      console.log(`🔑 Using user's own Tavily API key`);
+      apiKey = decrypt(userKey.key);
+    } else {
+      // User doesn't have their own key, use system key for freemium
+      console.log(`🔑 Using system Tavily API key for freemium user`);
+      apiKey = process.env.TAVILY_API_KEY;
+      
+      if (!apiKey) {
+        return res.status(500).json({ error: 'System Tavily API key not configured' });
+      }
     }
-
-    // Decrypt just-in-time
-    const apiKey = decrypt(userKey);
 
     // Make request to Tavily API
     const response = await axios.post('https://api.tavily.com/search', {
@@ -912,6 +921,12 @@ app.post('/api/proxy/tavily/search', authenticateToken, apiRateLimit, async (req
         'Content-Type': 'application/json'
       }
     });
+
+    // Track usage for freemium users
+    if (!userKey || !userKey.isUserKey) {
+      console.log(`📊 Tracking freemium usage for user ${req.user.userId}`);
+      await incrementApiUsage(req.user.userId, 'tavily');
+    }
 
     auditLog('tavily_search', req.user.userId, {
       ip: req.ip,
@@ -1632,27 +1647,23 @@ app.get('/api/usage/:provider', authenticateToken, async (req, res) => {
           console.error(`❌ Error headers:`, error.response?.headers);
           console.log(`⚠️ [USAGE-STATS] Falling back to stored usage data`);
         }
+      } else {
+        // User doesn't have their own API key, use system freemium model
+        console.log(`🔍 [USAGE-STATS] User using freemium model, checking usage limits...`);
+        
+        // For freemium users, show their individual usage against the 3-search limit
+        return res.json({
+          provider: 'tavily',
+          hasApiKey: false,
+          usageInfo: {
+            usageCount: keyInfo.usageCount || 0,
+            usageLimit: 3, // Freemium limit
+            hasFreesLeft: (keyInfo.usageCount || 0) < 3,
+            isFreemium: true,
+            creditsRemaining: Math.max(0, 3 - (keyInfo.usageCount || 0))
+          }
+        });
       }
-      
-      // Fallback to freemium data or default
-      console.log(`📊 [USAGE-STATS] Returning Tavily usage for user ${req.user.userId}:`, {
-        usageCount: keyInfo.usageCount,
-        usageLimit: keyInfo.usageLimit,
-        hasFreesLeft: keyInfo.hasFreesLeft,
-        isUserKey: keyInfo.isUserKey
-      });
-      
-      return res.json({
-        provider: 'tavily',
-        hasApiKey: keyInfo.isUserKey,
-        usageInfo: {
-          usageCount: keyInfo.usageCount,
-          usageLimit: keyInfo.usageLimit,
-          hasFreesLeft: keyInfo.hasFreesLeft,
-          isFreemium: !keyInfo.isUserKey,
-          creditsRemaining: keyInfo.isUserKey ? (keyInfo.usageLimit - keyInfo.usageCount) : undefined
-        }
-      });
     } else if (provider === 'serp') {
       if (!keyInfo || !keyInfo.isUserKey || !keyInfo.key) {
         return res.json({

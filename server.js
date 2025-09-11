@@ -1323,10 +1323,17 @@ async function getTavilyAccountUsage(apiKey) {
       const account = response.data.account || {};
       const key = response.data.key || {};
       
+      // Calculate remaining searches from the key usage (not account usage)
+      const keyUsage = key.usage || 0;
+      const keyLimit = key.limit || 0;
+      const remainingSearches = keyLimit - keyUsage;
+      
+      console.log(`🔍 [TAVILY-API] Key usage: ${keyUsage}/${keyLimit}, Remaining: ${remainingSearches}`);
+      
       return {
-        totalSearchesLeft: (account.plan_limit || 0) - (account.plan_usage || 0),
-        thisMonthUsage: account.plan_usage || key.usage || 0,
-        searchesPerMonth: account.plan_limit || 0,
+        totalSearchesLeft: remainingSearches,
+        thisMonthUsage: keyUsage,
+        searchesPerMonth: keyLimit,
         planName: account.current_plan || 'Unknown Plan'
       };
     }
@@ -1529,6 +1536,7 @@ app.get('/api/usage/:provider', authenticateToken, async (req, res) => {
           }
         } catch (error) {
           console.error(`❌ Failed to get Tavily account data:`, error.message);
+          console.error(`❌ Error details:`, error.response?.data || error.stack);
           console.log(`⚠️ [USAGE-STATS] Falling back to stored usage data`);
         }
       }

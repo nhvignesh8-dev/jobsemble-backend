@@ -227,32 +227,42 @@ async function authenticateToken(req, res, next) {
     const decoded = jwt.verify(token, JWT_SECRET);
     const userId = decoded.userId;
     
-    // Check if user has an active session
+    // Check if user has an active session (handle server restarts gracefully)
     const activeSession = activeSessions.get(userId);
     
     if (!activeSession) {
-      console.log(`🚫 No active session found for user ${userId}`);
-      return res.status(401).json({ 
-        error: 'Session expired', 
-        code: 'SESSION_EXPIRED',
-        message: 'Please log in again' 
+      // Server restart or new session - create one instead of rejecting
+      console.log(`🔄 No active session in memory for user ${userId}, creating new session (server restart handled)`);
+      const sessionId = crypto.randomBytes(16).toString('hex');
+      const now = Date.now();
+      
+      // Create new session for the user
+      activeSessions.set(userId, {
+        sessionId: sessionId,
+        token: token,
+        issuedAt: now,
+        lastActive: now,
+        userAgent: req.get('User-Agent') || 'Unknown',
+        ip: req.ip || 'Unknown'
       });
+      
+      console.log(`✅ New session created for user ${userId} after server restart`);
+    } else {
+      // Verify the token matches the active session
+      if (activeSession.token !== token) {
+        console.log(`🚫 Token mismatch for user ${userId} - session invalidated from another device`);
+        activeSessions.delete(userId); // Clean up invalid session
+        return res.status(401).json({ 
+          error: 'Session invalidated', 
+          code: 'SESSION_INVALIDATED',
+          message: 'You have been logged out because you signed in from another device' 
+        });
+      }
+      
+      // Update last active time
+      activeSession.lastActive = Date.now();
+      activeSessions.set(userId, activeSession);
     }
-    
-    // Verify the token matches the active session
-    if (activeSession.token !== token) {
-      console.log(`🚫 Token mismatch for user ${userId} - session invalidated from another device`);
-      activeSessions.delete(userId); // Clean up invalid session
-      return res.status(401).json({ 
-        error: 'Session invalidated', 
-        code: 'SESSION_INVALIDATED',
-        message: 'You have been logged out because you signed in from another device' 
-      });
-    }
-    
-    // Update last active time
-    activeSession.lastActive = Date.now();
-    activeSessions.set(userId, activeSession);
     
     req.user = decoded;
     next();

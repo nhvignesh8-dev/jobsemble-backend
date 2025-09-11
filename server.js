@@ -1313,6 +1313,13 @@ app.get('/api/usage/:provider', authenticateToken, async (req, res) => {
     }
 
     if (provider === 'tavily') {
+      console.log(`🔑 [DEBUG] Usage stats keyInfo:`, {
+        isUserKey: keyInfo.isUserKey,
+        hasKey: !!keyInfo.key,
+        keyType: keyInfo.key === 'SYSTEM_KEY' ? 'SYSTEM_KEY' : 'USER_KEY',
+        keyPreview: keyInfo.key ? keyInfo.key.substring(0, 20) + '...' : 'null'
+      });
+      
       // If user has their own API key, fetch real account usage
       if (keyInfo.isUserKey && keyInfo.key) {
         try {
@@ -1658,6 +1665,14 @@ app.post('/api/proxy/search-jobs', authenticateToken, jobSearchRateLimit, async 
     console.log(`🔑 [DEBUG] Getting API key for user ${req.user.userId}, provider: ${provider}`);
     const keyInfo = await getUserApiKey(req.user.userId, provider);
     console.log(`🔑 [DEBUG] API key result:`, keyInfo ? 'Found' : 'Not found');
+    if (keyInfo) {
+      console.log(`🔑 [DEBUG] keyInfo details:`, {
+        isUserKey: keyInfo.isUserKey,
+        hasKey: !!keyInfo.key,
+        keyType: keyInfo.key === 'SYSTEM_KEY' ? 'SYSTEM_KEY' : 'USER_KEY',
+        keyPreview: keyInfo.key ? keyInfo.key.substring(0, 20) + '...' : 'null'
+      });
+    }
     
     if (!keyInfo) {
       return res.status(404).json({ error: `${provider.charAt(0).toUpperCase() + provider.slice(1)} API key not found` });

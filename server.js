@@ -2353,10 +2353,14 @@ app.post('/api/read-sheet', authenticateToken, async (req, res) => {
 
 app.post('/api/delete-filter', authenticateToken, async (req, res) => {
   try {
+    console.log('🗑️ [DELETE-FILTER] Received delete request');
+    console.log('🗑️ [DELETE-FILTER] Request body:', req.body);
+    
     const { sheetUrl, filterId } = req.body;
     
     if (!sheetUrl || !filterId) {
-      return res.status(400).json({ error: 'Missing required fields' });
+      console.error('❌ [DELETE-FILTER] Missing required parameters');
+      return res.status(400).json({ error: 'Missing sheet URL or filter ID' });
     }
 
     // Extract sheet ID from URL
@@ -2368,25 +2372,251 @@ app.post('/api/delete-filter', authenticateToken, async (req, res) => {
     const sheetId = sheetIdMatch[1];
     const authHeaders = await getGoogleSheetsAuthHeaders();
 
-    // Frontend should handle data processing - backend only provides auth
-    // Write processed filter data to sheet
-    const writeResponse = await fetch(
-      `https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values/Filters!A1:Z1000?valueInputOption=RAW`,
+    if (!authHeaders) {
+      console.error('❌ [DELETE-FILTER] No valid Google access token available');
+      return res.status(400).json({ 
+        error: 'Google Sheets integration not configured. Please contact support.' 
+      });
+    }
+
+    // First check if the Filters sheet exists
+    const sheetInfoResponse = await fetch(
+      `https://sheets.googleapis.com/v4/spreadsheets/${sheetId}`,
       {
-        method: 'PUT',
-        headers: authHeaders,
-        body: JSON.stringify({ values: filterId.processedData })
+        headers: authHeaders
+      }
+    );
+    
+    if (!sheetInfoResponse.ok) {
+      const errorText = await sheetInfoResponse.text();
+      console.error('❌ [DELETE-FILTER] Cannot access spreadsheet:', errorText);
+      return res.status(400).json({ 
+        error: 'Cannot access spreadsheet. Please check the URL and permissions.', 
+        details: errorText 
+      });
+    }
+    
+    const sheetInfo = await sheetInfoResponse.json();
+    const filtersSheetExists = sheetInfo.sheets && sheetInfo.sheets.some(sheet => sheet.properties.title === 'Filters');
+    
+    if (!filtersSheetExists) {
+      console.log('❌ [DELETE-FILTER] Filters sheet does not exist');
+      return res.status(400).json({ error: 'Filters sheet does not exist in this spreadsheet' });
+    }
+    
+    console.log('✅ [DELETE-FILTER] Filters sheet exists, proceeding with deletion');
+
+    // Read existing filters
+    const filtersResponse = await fetch(
+      `https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values/Filters!A1:Z1000`,
+      {
+        headers: authHeaders
       }
     );
 
-    if (!writeResponse.ok) {
-      return res.status(500).json({ error: 'Failed to delete filter' });
+    if (!filtersResponse.ok) {
+      const errorText = await filtersResponse.text();
+      console.error('❌ [DELETE-FILTER] Cannot access Filters sheet:', errorText);
+      return res.status(400).json({ 
+        error: 'Cannot access Filters sheet', 
+        details: errorText 
+      });
     }
 
-    res.json({ success: true, message: 'Filter deleted successfully' });
+    const filtersData = await filtersResponse.json();
+    console.log('📊 [DELETE-FILTER] Filters data received:', filtersData);
+    
+    if (!filtersData.values || filtersData.values.length <= 1) {
+      console.log('❌ [DELETE-FILTER] No filters found to delete');
+      return res.status(400).json({ error: 'No filters found to delete' });
+    }
+
+    // Parse existing filters (skip header row)
+    const existingFilters = filtersData.values.slice(1).map(row => ({
+      id: row[0],
+      name: row[1],
+      locations: row[2] || '',
+      applicationStatuses: row[3] || '',
+      jobTitleKeywords: row[4] || '',
+      createdAt: row[5] || new Date().toISOString()
+    }));
+
+    // Find and remove the filter
+    console.log('🔍 [DELETE-FILTER] Looking for filter with ID:', filterId);
+    console.log('🔍 [DELETE-FILTER] Available filters:', existingFilters.map(f => ({ id: f.id, name: f.name })));
+    
+    const filterIndex = existingFilters.findIndex(f => f.id === filterId);
+    console.log('🔍 [DELETE-FILTER] Filter index found:', filterIndex);
+    
+    if (filterIndex === -1) {
+      console.error('❌ [DELETE-FILTER] Filter not found in existing filters');
+      return res.status(400).json({ error: 'Filter not found' });
+    }
+
+    console.log('✅ [DELETE-FILTER] Removing filter at index:', filterIndex);
+    const removedFilter = existingFilters[filterIndex];
+    console.log('🗑️ [DELETE-FILTER] Removed filter:', { id: removedFilter.id, name: removedFilter.name });
+    
+    existingFilters.splice(filterIndex, 1);
+    console.log('📊 [DELETE-FILTER] Remaining filters count:', existingFilters.length);
+
+    // Prepare data for writing to sheet
+    const sheetData = [
+      ['ID', 'Name', 'Locations', 'Application Statuses', 'Job Title Keywords', 'Created At'],
+      ...existingFilters.map(f => [
+        f.id,
+        f.name,
+        f.locations,
+        f.applicationStatuses,
+        f.jobTitleKeywords,
+        f.createdAt
+      ])
+    ];
+    
+    // If no filters remain, we still need to write the header row
+    if (existingFilters.length === 0) {
+      console.log('📝 [DELETE-FILTER] No filters remaining, writing header only');
+    }
+
+    // Write updated filters back to sheet
+    console.log('📝 [DELETE-FILTER] Writing updated filters to sheet:');
+    console.log('📝 [DELETE-FILTER] Sheet data:', sheetData);
+    console.log('📝 [DELETE-FILTER] Filters count:', existingFilters.length);
+    
+    // First, clear the entire Filters sheet using the proper CLEAR method
+    let clearResponse;
+    let clearAttempts = 0;
+    const maxClearAttempts = 3;
+    
+    while (clearAttempts < maxClearAttempts) {
+      clearResponse = await fetch(
+        `https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values/Filters!A1:Z1000:clear`,
+        {
+          method: 'POST',
+          headers: authHeaders
+        }
+      );
+
+      if (clearResponse.ok) {
+        console.log('✅ [DELETE-FILTER] Sheet cleared successfully');
+        break;
+      } else {
+        clearAttempts++;
+        const errorText = await clearResponse.text();
+        console.error(`❌ [DELETE-FILTER] Error clearing sheet (attempt ${clearAttempts}/${maxClearAttempts}):`, errorText);
+        
+        if (clearAttempts >= maxClearAttempts) {
+          return res.status(500).json({ 
+            error: 'Failed to clear Filters sheet after multiple attempts',
+            details: errorText
+          });
+        }
+        
+        // Wait before retry
+        await new Promise(resolve => setTimeout(resolve, 1000));
+      }
+    }
+
+    // Then write the new data with retry mechanism
+    let writeResponse;
+    let writeAttempts = 0;
+    const maxWriteAttempts = 3;
+    
+    while (writeAttempts < maxWriteAttempts) {
+      writeResponse = await fetch(
+        `https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values/Filters!A1:Z1000?valueInputOption=RAW`,
+        {
+          method: 'PUT',
+          headers: authHeaders,
+          body: JSON.stringify({
+            values: sheetData
+          })
+        }
+      );
+
+      if (writeResponse.ok) {
+        console.log('✅ [DELETE-FILTER] Data written successfully');
+        break;
+      } else {
+        writeAttempts++;
+        const errorText = await writeResponse.text();
+        console.error(`❌ [DELETE-FILTER] Error writing data (attempt ${writeAttempts}/${maxWriteAttempts}):`, errorText);
+        
+        if (writeAttempts >= maxWriteAttempts) {
+          return res.status(500).json({ 
+            error: 'Failed to write updated filters after multiple attempts',
+            details: errorText
+          });
+        }
+        
+        // Wait before retry
+        await new Promise(resolve => setTimeout(resolve, 1000));
+      }
+    }
+
+    console.log(`📊 [DELETE] Write response status: ${writeResponse.status}`);
+    console.log(`📊 [DELETE] Write response ok: ${writeResponse.ok}`);
+
+    if (!writeResponse.ok) {
+      const errorText = await writeResponse.text();
+      console.error('❌ [DELETE] Error writing updated filters:', errorText);
+      return res.status(500).json({ error: 'Failed to update Filters sheet' });
+    }
+
+    const writeResult = await writeResponse.json();
+    console.log(`📊 [DELETE] Write result:`, writeResult);
+
+    // Verify the write was successful by checking the updated cells count
+    if (writeResult.updatedCells && writeResult.updatedCells > 0) {
+      console.log(`✅ Filter deleted successfully: ${filterId} (${writeResult.updatedCells} cells updated)`);
+      res.json({
+        success: true,
+        message: 'Filter deleted successfully',
+        deletedFilterId: filterId,
+        updatedCells: writeResult.updatedCells
+      });
+    } else {
+      console.error(`❌ [DELETE] Write succeeded but no cells were updated. Write result:`, writeResult);
+      
+      // Try to verify the deletion by reading the sheet back
+      const verifyResponse = await fetch(
+        `https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values/Filters!A1:Z1000`,
+        {
+          headers: authHeaders
+        }
+      );
+      
+      if (verifyResponse.ok) {
+        const verifyData = await verifyResponse.json();
+        const remainingFilters = verifyData.values ? verifyData.values.slice(1) : [];
+        const filterStillExists = remainingFilters.some(row => row[0] === filterId);
+        
+        if (filterStillExists) {
+          console.error(`❌ [DELETE] Filter still exists in sheet after deletion attempt`);
+          res.status(500).json({ 
+            error: 'Filter deletion failed - filter still exists in Google Sheets',
+            details: writeResult
+          });
+        } else {
+          console.log(`✅ [DELETE] Filter successfully deleted (verified by reading sheet)`);
+          res.json({
+            success: true,
+            message: 'Filter deleted successfully (verified)',
+            deletedFilterId: filterId,
+            updatedCells: writeResult.updatedCells || 0
+          });
+        }
+      } else {
+        res.status(500).json({ 
+          error: 'Filter deletion failed - no cells were updated in Google Sheets',
+          details: writeResult
+        });
+      }
+    }
+
   } catch (error) {
-    console.error('Error deleting filter:', error);
-    res.status(500).json({ error: 'Internal server error' });
+    console.error('Delete filter error:', error);
+    res.status(500).json({ error: 'Failed to delete filter' });
   }
 });
 

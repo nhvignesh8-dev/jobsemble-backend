@@ -1304,6 +1304,37 @@ async function createJWT(header, payload, privateKey) {
   return `${encodedHeader}.${encodedPayload}.${encodedSignature}`;
 }
 
+// Test endpoint to debug Tavily API
+app.get('/api/test-tavily-usage/:userId', authenticateToken, async (req, res) => {
+  try {
+    const { userId } = req.params;
+    console.log(`🧪 [TEST] Testing Tavily usage for user ${userId}`);
+    
+    const keyInfo = await getUserApiKey(userId, 'tavily');
+    if (!keyInfo || !keyInfo.isUserKey || !keyInfo.key) {
+      return res.json({ error: 'No API key found for user' });
+    }
+    
+    const decryptedKey = decrypt(keyInfo.key);
+    console.log(`🧪 [TEST] Decrypted key length: ${decryptedKey.length}`);
+    
+    const accountData = await getTavilyAccountUsage(decryptedKey);
+    console.log(`🧪 [TEST] Account data:`, accountData);
+    
+    res.json({
+      success: true,
+      keyInfo: {
+        isUserKey: keyInfo.isUserKey,
+        keyLength: decryptedKey.length
+      },
+      accountData
+    });
+  } catch (error) {
+    console.error(`❌ [TEST] Error:`, error.message);
+    res.json({ error: error.message, stack: error.stack });
+  }
+});
+
 // Helper function to get Tavily account usage from their API
 async function getTavilyAccountUsage(apiKey) {
   try {

@@ -828,9 +828,8 @@ app.post('/api/proxy/tavily/search', authenticateToken, apiRateLimit, async (req
     // Decrypt just-in-time
     const apiKey = decrypt(userKey);
 
-    // Make request to Tavily API
+    // Make request to Tavily API using Bearer authentication
     const response = await axios.post('https://api.tavily.com/search', {
-      api_key: apiKey,
       query,
       search_depth: searchDepth,
       include_answer: false,
@@ -840,7 +839,8 @@ app.post('/api/proxy/tavily/search', authenticateToken, apiRateLimit, async (req
     }, {
       timeout: 30000,
       headers: {
-        'Content-Type': 'application/json'
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${apiKey}`
       }
     });
 
@@ -1130,7 +1130,6 @@ async function getTavilyAccountUsage(apiKey) {
     try {
       console.log(`🔄 Usage endpoint failed, trying test search to verify key`);
       const testResponse = await axios.post('https://api.tavily.com/search', {
-        api_key: apiKey,
         query: 'test',
         search_depth: 'basic',
         include_answer: false,
@@ -1140,7 +1139,8 @@ async function getTavilyAccountUsage(apiKey) {
       }, {
         timeout: 10000,
         headers: {
-          'Content-Type': 'application/json'
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${apiKey}`
         }
       });
       
@@ -1575,7 +1575,6 @@ app.post('/api/proxy/tavily-raw', authenticateToken, apiRateLimit, async (req, r
     console.log(`🔗 [BACKEND API] Making Tavily API call: ${query}`);
     
     const tavilyResponse = await axios.post('https://api.tavily.com/search', {
-      api_key: apiKey,
       query: query,
       search_depth: search_depth || 'basic',
       include_answer: false,
@@ -1583,7 +1582,11 @@ app.post('/api/proxy/tavily-raw', authenticateToken, apiRateLimit, async (req, r
       include_raw_content: false,
       max_results: max_results || 20
     }, {
-      timeout: 30000
+      timeout: 30000,
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${apiKey}`
+      }
     });
     
     // Return raw data for frontend processing
@@ -1795,9 +1798,8 @@ app.post('/api/proxy/search-jobs', authenticateToken, jobSearchRateLimit, async 
 
     // Use the appropriate search engine
     if (provider === 'tavily') {
-      // Tavily search
+      // Tavily search using Bearer authentication (new format)
       const tavilyResponse = await axios.post('https://api.tavily.com/search', {
-        api_key: apiKey,
         query: jobBoardQuery,
         search_depth: 'basic',
         include_answer: false,
@@ -1807,7 +1809,8 @@ app.post('/api/proxy/search-jobs', authenticateToken, jobSearchRateLimit, async 
       }, {
         timeout: 30000,
         headers: {
-          'Content-Type': 'application/json'
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${apiKey}`
         }
       });
 

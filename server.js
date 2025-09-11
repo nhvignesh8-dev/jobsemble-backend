@@ -2390,9 +2390,13 @@ app.post('/api/save-filter', authenticateToken, async (req, res) => {
 
 app.post('/api/load-filters', authenticateToken, async (req, res) => {
   try {
+    console.log('📖 [LOAD-FILTERS] Received load request');
+    console.log('📖 [LOAD-FILTERS] Request body:', req.body);
+    
     const { sheetUrl } = req.body;
     
     if (!sheetUrl) {
+      console.error('❌ [LOAD-FILTERS] Missing sheet URL');
       return res.status(400).json({ error: 'Missing sheet URL' });
     }
 
@@ -2404,6 +2408,15 @@ app.post('/api/load-filters', authenticateToken, async (req, res) => {
 
     const sheetId = sheetIdMatch[1];
     const authHeaders = await getGoogleSheetsAuthHeaders();
+
+    if (!authHeaders) {
+      console.error('❌ [LOAD-FILTERS] No valid Google access token available');
+      return res.status(400).json({ 
+        error: 'Google Sheets integration not configured. Please contact support.' 
+      });
+    }
+
+    console.log('🔍 [LOAD-FILTERS] Reading filters from Google Sheets...');
     const filtersResponse = await fetch(
       `https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values/Filters!A1:Z1000`,
       {
@@ -2412,14 +2425,33 @@ app.post('/api/load-filters', authenticateToken, async (req, res) => {
     );
 
     if (!filtersResponse.ok) {
-      return res.json({ success: true, rawData: [] }); // Return empty if no Filters sheet
+      const errorText = await filtersResponse.text();
+      console.log('📝 [LOAD-FILTERS] No Filters sheet found or cannot access:', errorText);
+      return res.json({ success: true, filters: [] }); // Return empty filters array
     }
 
     const filtersData = await filtersResponse.json();
-    const rawData = filtersData.values || [];
+    console.log('📊 [LOAD-FILTERS] Raw filters data:', filtersData);
+    
+    if (!filtersData.values || filtersData.values.length <= 1) {
+      console.log('📝 [LOAD-FILTERS] No filters found in sheet');
+      return res.json({ success: true, filters: [] });
+    }
 
-    // Return raw data only - let frontend handle processing
-    res.json({ success: true, rawData });
+    // Parse filters from sheet data (skip header row)
+    const filters = filtersData.values.slice(1).map(row => ({
+      id: row[0],
+      name: row[1],
+      locations: row[2] || '',
+      applicationStatuses: row[3] || '',
+      jobTitleKeywords: row[4] || '',
+      createdAt: row[5] || new Date().toISOString()
+    }));
+
+    console.log('✅ [LOAD-FILTERS] Successfully loaded filters:', filters.length);
+    console.log('📊 [LOAD-FILTERS] Filter details:', filters.map(f => ({ id: f.id, name: f.name })));
+
+    res.json({ success: true, filters });
   } catch (error) {
     console.error('Error loading filters:', error);
     res.status(500).json({ error: 'Internal server error' });

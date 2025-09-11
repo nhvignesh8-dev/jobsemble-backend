@@ -1,7 +1,7 @@
 # DigitalOcean Configuration
 CLOUD_PROVIDER=DigitalOcean-Professional
 SEARCH_BACKEND=tavily
-TAVILY_API_KEY=your_tavily_api_key_here
+TAVILY_API_KEY=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
 PORT=8080
 NODE_ENV=production
 

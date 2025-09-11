@@ -1346,6 +1346,97 @@ async function createJWT(header, payload, privateKey) {
   return `${encodedHeader}.${encodedPayload}.${encodedSignature}`;
 }
 
+// Update Tavily system key in database
+app.post('/api/update-tavily-system-key', async (req, res) => {
+  try {
+    const { newApiKey } = req.body;
+    
+    if (!newApiKey) {
+      return res.status(400).json({ error: 'New API key required' });
+    }
+    
+    console.log('🔄 Updating Tavily system key in database...');
+    
+    const SYSTEM_KEYS_DOC_ID = '68c1d918601d5f9f7958';
+    
+    // Get current system keys document
+    let systemDoc;
+    try {
+      systemDoc = await databases.getDocument(DATABASE_ID, COLLECTION_ID, SYSTEM_KEYS_DOC_ID);
+      console.log('📄 Current system keys document found');
+    } catch (error) {
+      console.log('❌ System keys document not found, creating new one...');
+      systemDoc = null;
+    }
+    
+    // Parse existing API keys or start fresh
+    let apiKeys = {};
+    if (systemDoc && systemDoc.tavilyApiKey) {
+      try {
+        apiKeys = JSON.parse(systemDoc.tavilyApiKey);
+        console.log('📊 Current API keys loaded');
+      } catch (e) {
+        console.log('⚠️ Could not parse existing tavilyApiKey, starting fresh');
+      }
+    }
+    
+    // Update the Tavily system API key
+    const updatedApiKeys = {
+      ...apiKeys,
+      tavily: {
+        key: newApiKey,
+        isUserKey: false,
+        usageCount: 0,
+        usageLimit: 3,
+        hasFreesLeft: true,
+        isFreemium: true,
+        lastUpdated: new Date().toISOString()
+      }
+    };
+    
+    console.log('🔄 Updating Tavily system key to:', newApiKey);
+    
+    // Update or create the document
+    let result;
+    if (systemDoc) {
+      result = await databases.updateDocument(
+        DATABASE_ID,
+        COLLECTION_ID,
+        SYSTEM_KEYS_DOC_ID,
+        {
+          tavilyApiKey: JSON.stringify(updatedApiKeys)
+        }
+      );
+    } else {
+      result = await databases.createDocument(
+        DATABASE_ID,
+        COLLECTION_ID,
+        SYSTEM_KEYS_DOC_ID,
+        {
+          accountId: 'SYSTEM_API_KEYS',
+          tavilyApiKey: JSON.stringify(updatedApiKeys)
+        }
+      );
+    }
+    
+    console.log('✅ Successfully updated Tavily system key in database!');
+    
+    res.json({
+      success: true,
+      message: 'Tavily system key updated successfully',
+      newApiKey: newApiKey,
+      updatedAt: new Date().toISOString()
+    });
+    
+  } catch (error) {
+    console.error('❌ Error updating Tavily system key:', error.message);
+    res.status(500).json({ 
+      error: 'Failed to update Tavily system key',
+      details: error.message 
+    });
+  }
+});
+
 // Test endpoint to debug Tavily API
 app.get('/api/test-tavily-usage/:userId', authenticateToken, async (req, res) => {
   try {

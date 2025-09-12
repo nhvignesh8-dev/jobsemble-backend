@@ -1607,9 +1607,8 @@ app.post('/api/proxy/search-jobs', authenticateToken, jobSearchRateLimit, async 
 
     // Build job board specific search query based on the specified patterns
     let jobBoardQuery;
-    // Make queries less restrictive for better SERP results
-    const jobTitle = query.includes(' ') ? `"${query}"` : query; // Only quote if multiple words
-    const searchLocation = location; // Remove quotes around location for broader matching
+    const jobTitle = `"${query}"`;
+    const searchLocation = `"${location}"`;
     
     switch (jobBoard.toLowerCase()) {
       case 'greenhouse':
@@ -1778,7 +1777,6 @@ app.post('/api/proxy/search-jobs', authenticateToken, jobSearchRateLimit, async 
       console.log(`📊 [SERP DEBUG] Time filter: ${timeFilter || 'none'}`);
       console.log(`📊 [SERP DEBUG] API key found and valid: ${apiKey ? 'Yes' : 'No'}`);
       console.log(`📊 [SERP DEBUG] User ID: ${req.user.userId}`);
-      console.log(`📊 [SERP DEBUG] Original query: "${query}", Location: "${location}", Job Board: "${jobBoard}"`);
       
       // Single API call with num=100 (max per call)
       const params = new URLSearchParams({

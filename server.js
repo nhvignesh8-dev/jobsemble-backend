@@ -1841,9 +1841,19 @@ app.post('/api/proxy/search-jobs', authenticateToken, jobSearchRateLimit, async 
     console.log(`📊 [BACKEND DEBUG] Returning ${searchResults.length} raw results for frontend processing`);
     
     // Only basic validation - frontend will do all the heavy processing
-    searchResults = searchResults.filter(job => {
-      return job.title && job.url && job.title.length > 3;
-    });
+    // For Tavily: results are raw API data with title/url at root level
+    // For SERP: results are processed job objects
+    if (provider === 'tavily') {
+      // Tavily results are raw API data - minimal filtering
+      searchResults = searchResults.filter(result => {
+        return result.title && result.url && result.title.length > 3;
+      });
+    } else {
+      // SERP results are processed job objects
+      searchResults = searchResults.filter(job => {
+        return job.title && job.url && job.title.length > 3;
+      });
+    }
     
     console.log(`📊 [BACKEND DEBUG] After basic filtering: ${searchResults.length} results`);
 

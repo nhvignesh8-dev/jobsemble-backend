@@ -1718,7 +1718,7 @@ app.post('/api/proxy/search-jobs', authenticateToken, jobSearchRateLimit, async 
         include_answer: false,
         include_images: false,
         include_raw_content: false,
-        max_results: 50
+        max_results: 100
       };
       
       // Add days parameter for time filtering (Tavily's way, not Google's tbs syntax)

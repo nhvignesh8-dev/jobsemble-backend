@@ -1686,8 +1686,9 @@ app.post('/api/proxy/search-jobs', authenticateToken, jobSearchRateLimit, async 
         break;
     }
     
-    // Add time filter to query for Tavily (SERP handles it separately)
-    if (provider === 'tavily' && timeFilter && timeFilter !== 'anytime') {
+    // Tavily doesn't use query-based time filters - we'll use the days parameter in the API call
+    // SERP uses query-based time filters, so we add them to the query
+    if (provider === 'serp' && timeFilter && timeFilter !== 'anytime') {
       const timeFilterMapping = {
         'day': 'tbs=qdr:d',
         'week': 'tbs=qdr:w', 
@@ -1709,8 +1710,8 @@ app.post('/api/proxy/search-jobs', authenticateToken, jobSearchRateLimit, async 
 
     // Use the appropriate search engine
     if (provider === 'tavily') {
-      // Tavily search
-      const tavilyResponse = await axios.post('https://api.tavily.com/search', {
+      // Tavily search with proper time filtering
+      const tavilyParams = {
         api_key: apiKey,
         query: jobBoardQuery,
         search_depth: 'basic',
@@ -1718,7 +1719,29 @@ app.post('/api/proxy/search-jobs', authenticateToken, jobSearchRateLimit, async 
         include_images: false,
         include_raw_content: false,
         max_results: 50
-      }, {
+      };
+      
+      // Add days parameter for time filtering (Tavily's way, not Google's tbs syntax)
+      if (timeFilter && timeFilter !== 'anytime') {
+        const daysMapping = {
+          'day': 1,
+          'week': 7, 
+          'month': 30,
+          'year': 365,
+          'qdr:d': 1,
+          'qdr:w': 7,
+          'qdr:m': 30,
+          'qdr:y': 365
+        };
+        
+        const days = daysMapping[timeFilter];
+        if (days) {
+          tavilyParams.days = days;
+          console.log(`📅 Using Tavily days filter: ${days} days`);
+        }
+      }
+      
+      const tavilyResponse = await axios.post('https://api.tavily.com/search', tavilyParams, {
         timeout: 30000,
         headers: {
           'Content-Type': 'application/json'

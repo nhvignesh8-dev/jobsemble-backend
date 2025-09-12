@@ -1607,8 +1607,9 @@ app.post('/api/proxy/search-jobs', authenticateToken, jobSearchRateLimit, async 
 
     // Build job board specific search query based on the specified patterns
     let jobBoardQuery;
-    const jobTitle = `"${query}"`;
-    const searchLocation = `"${location}"`;
+    // Make queries less restrictive for better SERP results
+    const jobTitle = query.includes(' ') ? `"${query}"` : query; // Only quote if multiple words
+    const searchLocation = location; // Remove quotes around location for broader matching
     
     switch (jobBoard.toLowerCase()) {
       case 'greenhouse':
@@ -1777,6 +1778,7 @@ app.post('/api/proxy/search-jobs', authenticateToken, jobSearchRateLimit, async 
       console.log(`📊 [SERP DEBUG] Time filter: ${timeFilter || 'none'}`);
       console.log(`📊 [SERP DEBUG] API key found and valid: ${apiKey ? 'Yes' : 'No'}`);
       console.log(`📊 [SERP DEBUG] User ID: ${req.user.userId}`);
+      console.log(`📊 [SERP DEBUG] Original query: "${query}", Location: "${location}", Job Board: "${jobBoard}"`);
       
       // Single API call with num=100 (max per call)
       const params = new URLSearchParams({
@@ -1823,7 +1825,37 @@ app.post('/api/proxy/search-jobs', authenticateToken, jobSearchRateLimit, async 
         console.log(`📊 [SERP DEBUG] First few results:`, organicResults.slice(0, 3).map(r => ({ title: r.title, link: r.link })));
         
         if (organicResults.length === 0) {
-          console.log(`📊 [SERP DEBUG] No results found`);
+          console.log(`📊 [SERP DEBUG] No results found with original query`);
+          
+          // Try a fallback query with simpler format
+          console.log(`📊 [SERP DEBUG] Trying fallback query...`);
+          const fallbackQuery = `${query} ${jobBoard} jobs ${location}`;
+          console.log(`📊 [SERP DEBUG] Fallback query: "${fallbackQuery}"`);
+          
+          const fallbackParams = new URLSearchParams({
+            api_key: apiKey,
+            engine: 'google',
+            q: fallbackQuery,
+            num: '50',
+            start: '0',
+            filter: '0'
+          });
+          
+          try {
+            const fallbackResponse = await axios.get(`https://serpapi.com/search?${fallbackParams}`, {
+              timeout: 30000
+            });
+            
+            const fallbackResults = fallbackResponse.data.organic_results || [];
+            console.log(`📊 [SERP DEBUG] Fallback query returned: ${fallbackResults.length} results`);
+            
+            if (fallbackResults.length > 0) {
+              console.log(`📊 [SERP DEBUG] Using fallback results`);
+              allOrganicResults = fallbackResults;
+            }
+          } catch (fallbackError) {
+            console.log(`📊 [SERP DEBUG] Fallback query also failed:`, fallbackError.message);
+          }
         } else {
           console.log(`📊 [SERP DEBUG] Successfully retrieved ${organicResults.length} results in a single call`);
           allOrganicResults = organicResults; // Direct assignment, no need to push

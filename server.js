@@ -1725,7 +1725,7 @@ app.post('/api/proxy/search-jobs', authenticateToken, jobSearchRateLimit, async 
         }
       });
 
-      // Process Tavily results into job format
+      // Return raw Tavily data for frontend processing
       const tavilyResults = tavilyResponse.data.results || [];
       
       // Debug: Log first result to see available fields
@@ -1734,53 +1734,16 @@ app.post('/api/proxy/search-jobs', authenticateToken, jobSearchRateLimit, async 
         console.log(`🔍 Sample Tavily result:`, JSON.stringify(tavilyResults[0], null, 2));
       }
       
-      searchResults = tavilyResults.map(result => {
-        const cleanTitle = cleanJobTitle(result.title, 'tavily', jobBoard);
-        
-        // Use time filter selection for datePosted instead of trying to extract actual dates
-        let datePosted = 'Recently';
-        if (timeFilter && timeFilter !== 'anytime') {
-          const timeFilterDisplayMapping = {
-            'day': 'Today',
-            'week': 'This week', 
-            'month': 'This month',
-            'year': 'This year',
-            'qdr:d': 'Today',
-            'qdr:w': 'This week',
-            'qdr:m': 'This month',
-            'qdr:y': 'This year'
-          };
-          datePosted = timeFilterDisplayMapping[timeFilter] || 'Recently';
-        }
-        
-        // Enhanced company extraction for Tavily Greenhouse results
-        let company = extractCompanyFromUrl(result.url) || extractCompanyFromJobBoard(jobBoard);
-        
-        // Clean up problematic company names
-        if (company) {
-          company = company
-            .replace(/\?error=true/i, '')
-            .replace(/\?.*$/, '') // Remove query parameters
-            .replace(/^embed$/i, 'Company') // Replace "Embed" with generic
-            .replace(/^www\./i, '')
-            .replace(/\.com$/i, '');
-            
-          // Capitalize properly
-          if (company.length > 1) {
-            company = company.charAt(0).toUpperCase() + company.slice(1).toLowerCase();
-          }
-        }
-        
-        return {
-          title: cleanTitle,
-          company: company,
+      // Return raw Tavily data with metadata for frontend processing
+      searchResults = tavilyResults.map(result => ({
+        ...result, // Raw Tavily data
+        _metadata: {
+          jobBoard: jobBoard,
           location: location,
-          url: result.url,
-          description: result.content || '',
-          datePosted: datePosted,
-          source: jobBoard
-        };
-      });
+          timeFilter: timeFilter,
+          searchQuery: jobBoardQuery
+        }
+      }));
 
     } else if (provider === 'serp') {
       // SERP API search with single call to get 100 results

@@ -1737,14 +1737,20 @@ app.post('/api/proxy/search-jobs', authenticateToken, jobSearchRateLimit, async 
       searchResults = tavilyResults.map(result => {
         const cleanTitle = cleanJobTitle(result.title, 'tavily', jobBoard);
         
-        // Try to extract date from various possible fields
+        // Use time filter selection for datePosted instead of trying to extract actual dates
         let datePosted = 'Recently';
-        if (result.published_date) {
-          datePosted = result.published_date;
-        } else if (result.date) {
-          datePosted = result.date;
-        } else if (result.timestamp) {
-          datePosted = new Date(result.timestamp).toLocaleDateString();
+        if (timeFilter && timeFilter !== 'anytime') {
+          const timeFilterDisplayMapping = {
+            'day': 'Today',
+            'week': 'This week', 
+            'month': 'This month',
+            'year': 'This year',
+            'qdr:d': 'Today',
+            'qdr:w': 'This week',
+            'qdr:m': 'This month',
+            'qdr:y': 'This year'
+          };
+          datePosted = timeFilterDisplayMapping[timeFilter] || 'Recently';
         }
         
         // Enhanced company extraction for Tavily Greenhouse results

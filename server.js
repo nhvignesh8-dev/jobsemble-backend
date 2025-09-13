@@ -3,7 +3,7 @@
  * Implements security best practices for API key management
  * 
  * Security Features:
- * - Server-side encrypted key storage
+ * - Server-side secure key storage
  * - Short-lived JWT tokens
  * - Rate limiting per user
  * - Input validation and sanitization
@@ -24,17 +24,16 @@ import { Client, Databases, Query, ID } from 'appwrite';
 
 const app = express();
 const PORT = process.env.PORT || 3001;
+const ENCRYPTION_KEY = process.env.ENCRYPTION_KEY;
 
 // Trust proxy for DigitalOcean App Platform and other cloud providers
 app.set('trust proxy', 1);
 
 // Security Configuration
 const JWT_SECRET = process.env.JWT_SECRET || crypto.randomBytes(64).toString('hex');
-// Use a consistent encryption key to avoid decryption issues
-const ENCRYPTION_KEY = process.env.ENCRYPTION_KEY ? Buffer.from(process.env.ENCRYPTION_KEY, 'hex') : crypto.scryptSync('job-scout-encryption-key-2024', 'salt', 32);
 
-// System API Keys for freemium users - stored encrypted in database
-// Create a system user profile to store encrypted system API keys
+// System API Keys for freemium users - stored securely in database
+// Create a system user profile to store system API keys
 
 // Appwrite Configuration
 const client = new Client()
@@ -231,29 +230,18 @@ const jobSearchRateLimit = rateLimit({
 
 app.use(globalRateLimit);
 
-// Encryption Utilities
-function encrypt(text) {
-  if (!text) return '';
-  
-  const iv = crypto.randomBytes(16);
-  const cipher = crypto.createCipheriv('aes-256-cbc', ENCRYPTION_KEY, iv);
-  let encrypted = cipher.update(text, 'utf8', 'hex');
-  encrypted += cipher.final('hex');
-  
-  return iv.toString('hex') + ':' + encrypted;
+// API Key Utilities - Plain text storage since backend is secure
+function storeApiKey(apiKey) {
+  // Return the API key as-is since we're storing plain text
+  return apiKey;
 }
 
-function decrypt(encryptedText) {
-  if (!encryptedText) return '';
-  
-  const [ivHex, encrypted] = encryptedText.split(':');
-  const iv = Buffer.from(ivHex, 'hex');
-  const decipher = crypto.createDecipheriv('aes-256-cbc', ENCRYPTION_KEY, iv);
-  let decrypted = decipher.update(encrypted, 'hex', 'utf8');
-  decrypted += decipher.final('utf8');
-  
-  return decrypted;
+function retrieveApiKey(storedKey) {
+  // Return the stored key as-is since we're using plain text
+  return storedKey || '';
 }
+
+
 
 // Authentication Middleware with Session Validation
 async function authenticateToken(req, res, next) {
@@ -286,8 +274,8 @@ async function authenticateToken(req, res, next) {
       });
     } else {
       // Update last active time for existing session
-      activeSession.lastActive = Date.now();
-      activeSessions.set(userId, activeSession);
+    activeSession.lastActive = Date.now();
+    activeSessions.set(userId, activeSession);
     }
     
     req.user = decoded;
@@ -486,8 +474,9 @@ app.delete('/api/keys/:provider', authenticateToken, async (req, res) => {
       console.log(`🗑️ Deleted SERP API key and usage tracking for user ${req.user.userId}`);
     } else if (provider === 'tavily') {
       delete apiKeys.tavilyApiKey;
-      delete apiKeys.tavilyUsageCount;
-      console.log(`🗑️ Deleted Tavily API key and usage count for user ${req.user.userId}`);
+      // CRITICAL: Do NOT delete usage count - this prevents abuse of freemium system
+      // Usage count should persist even when API key is removed
+      console.log(`🗑️ Deleted Tavily API key for user ${req.user.userId} (usage count preserved: ${apiKeys.tavilyUsageCount || 0}/${apiKeys.tavilyUsageLimit || 3})`);
     }
 
     // Update the user profile
@@ -519,8 +508,8 @@ app.delete('/api/keys/:provider', authenticateToken, async (req, res) => {
   }
 });
 
-// System API key now properly encrypted with consistent encryption key
-// Decryption issues resolved - temporary restore endpoint removed
+// System API key now properly stored with consistent format
+// Storage issues resolved - temporary restore endpoint removed
 
 // Store Google Sheet URL Endpoint
 app.post('/api/user/google-sheet-url', authenticateToken, async (req, res) => {
@@ -648,9 +637,9 @@ app.post('/api/keys/store', authenticateToken, async (req, res) => {
       return res.status(400).json({ error: 'Invalid provider' });
     }
 
-    // Encrypt the API key
-    const encryptedKey = encrypt(apiKey);
-    console.log(`🔒 API key encrypted for ${provider}`);
+    // Store the API key as plain text (backend is secure)
+    const storedKey = storeApiKey(apiKey);
+    console.log(`💾 API key stored for ${provider}`);
     
     // Find the user's profile document
     const userDocs = await databases.listDocuments(
@@ -680,9 +669,9 @@ app.post('/api/keys/store', authenticateToken, async (req, res) => {
     const currentDate = new Date();
     const currentMonth = `${currentDate.getFullYear()}-${String(currentDate.getMonth() + 1).padStart(2, '0')}`;
 
-    // Store the encrypted API key and initialize usage tracking
+    // Store the API key and initialize usage tracking
     if (provider === 'tavily') {
-      apiKeys.tavilyApiKey = encryptedKey;
+      apiKeys.tavilyApiKey = storedKey;
       // Initialize Tavily freemium tracking if not exists (check for undefined specifically)
       // CRITICAL: Never reset existing usage count - this should be ONE-TIME only
       if (typeof apiKeys.tavilyUsageCount === 'undefined') {
@@ -696,7 +685,7 @@ app.post('/api/keys/store', authenticateToken, async (req, res) => {
       }
       console.log(`💾 Tavily API key stored for ${req.user.userId}`);
     } else if (provider === 'serp') {
-      apiKeys.serpApiKey = encryptedKey;
+      apiKeys.serpApiKey = storedKey;
       // Initialize SERP monthly tracking
       if (!apiKeys.serpUsageTracking || apiKeys.serpUsageTracking.month !== currentMonth) {
         apiKeys.serpUsageTracking = {
@@ -749,14 +738,14 @@ app.post('/api/proxy/tavily/search', authenticateToken, apiRateLimit, async (req
       return res.status(400).json({ error: 'Search query required' });
     }
 
-    // Get user's encrypted Tavily API key
+    // Get user's Tavily API key
     const userKey = await getUserApiKey(req.user.userId, 'tavily');
     if (!userKey) {
       return res.status(404).json({ error: 'Tavily API key not found' });
     }
 
-    // Decrypt just-in-time
-    const apiKey = decrypt(userKey);
+    // Retrieve API key (plain text)
+    const apiKey = retrieveApiKey(userKey);
 
     // Make request to Tavily API
     const response = await axios.post('https://api.tavily.com/search', {
@@ -813,14 +802,14 @@ app.post('/api/proxy/serp/search', authenticateToken, apiRateLimit, async (req, 
       return res.status(400).json({ error: 'Search query required' });
     }
 
-    // Get user's encrypted SERP API key
+    // Get user's SERP API key
     const userKey = await getUserApiKey(req.user.userId, 'serp');
     if (!userKey) {
       return res.status(404).json({ error: 'SERP API key not found' });
     }
 
-    // Decrypt just-in-time
-    const apiKey = decrypt(userKey);
+    // Retrieve API key (plain text)
+    const apiKey = retrieveApiKey(userKey);
 
     // Build request parameters
     const params = new URLSearchParams({
@@ -958,7 +947,7 @@ async function incrementApiUsage(userId, provider) {
   }
 }
 
-// Helper function to get system API key (stored encrypted in database)
+// Helper function to get system API key (stored securely in database)
 async function getSystemApiKey(provider) {
   try {
     const SYSTEM_USER_ID = 'SYSTEM_API_KEYS';
@@ -987,20 +976,15 @@ async function getSystemApiKey(provider) {
     }
 
     if (provider === 'tavily') {
-      const encryptedKey = apiKeys.systemTavilyApiKey;
-      if (!encryptedKey) {
+      const storedKey = apiKeys.systemTavilyApiKey;
+      if (!storedKey) {
         console.log(`❌ System Tavily API key not found in database`);
         return null;
       }
       
-      try {
-        const decryptedKey = decrypt(encryptedKey);
-        console.log(`✅ System Tavily API key retrieved from database`);
-        return decryptedKey;
-      } catch (error) {
-        console.error(`❌ Failed to decrypt system Tavily API key:`, error.message);
-        return null;
-      }
+      // System API key should be stored in plain text now
+      console.log(`✅ System Tavily API key retrieved from database`);
+      return storedKey;
     }
 
     return null;
@@ -1029,11 +1013,26 @@ async function getTavilyAccountUsage(apiKey) {
       const account = response.data.account || {};
       const key = response.data.key || {};
       
+      const planLimit = account.plan_limit;
+      const planUsage = account.plan_usage || key.usage || 0;
+      const planName = account.current_plan || 'Unknown Plan';
+      
+      // Handle cases where limit is not defined (e.g. pay-as-you-go plans)
+      if (planLimit === null || planLimit === undefined) {
+        console.log(`ℹ️ Tavily plan limit not defined for user. Assuming high limit.`);
+        return {
+          totalSearchesLeft: 99999,
+          thisMonthUsage: planUsage,
+          searchesPerMonth: 99999, // Represents a very high/unlimited limit
+          planName: planName,
+        };
+      }
+
       return {
-        totalSearchesLeft: (account.plan_limit || 0) - (account.plan_usage || 0),
-        thisMonthUsage: account.plan_usage || key.usage || 0,
-        searchesPerMonth: account.plan_limit || 0,
-        planName: account.current_plan || 'Unknown Plan'
+        totalSearchesLeft: planLimit - planUsage,
+        thisMonthUsage: planUsage,
+        searchesPerMonth: planLimit,
+        planName: planName
       };
     }
     
@@ -1077,6 +1076,33 @@ async function getTavilyAccountUsage(apiKey) {
   }
 }
 
+// Helper function to get user document
+async function getUserDocument(userId) {
+  try {
+    console.log(`🔍 Getting user document for user ${userId}`);
+    
+    // Find the user's profile document
+    const userDocs = await databases.listDocuments(
+      DATABASE_ID,
+      COLLECTION_ID,
+      [Query.equal('accountId', userId)]
+    );
+
+    if (userDocs.documents.length === 0) {
+      console.log(`❌ User profile not found for ${userId}`);
+      return null;
+    }
+
+    const userDoc = userDocs.documents[0];
+    console.log(`✅ Found user document for ${userId}`);
+    return userDoc;
+    
+  } catch (error) {
+    console.error(`❌ Error getting user document for ${userId}:`, error);
+    return null;
+  }
+}
+
 // Helper function to get user's API key
 async function getUserApiKey(userId, provider) {
   try {
@@ -1107,7 +1133,7 @@ async function getUserApiKey(userId, provider) {
       return null;
     }
 
-    // Return the appropriate encrypted API key with usage info
+    // Return the appropriate stored API key with usage info
     if (provider === 'tavily') {
       const key = apiKeys.tavilyApiKey;
       const usageCount = apiKeys.tavilyUsageCount || 0;
@@ -1204,8 +1230,8 @@ app.get('/api/usage/:provider', authenticateToken, async (req, res) => {
       // If user has their own API key, fetch real account usage
       if (keyInfo.isUserKey && keyInfo.key) {
         try {
-          const decryptedKey = decrypt(keyInfo.key);
-          const accountData = await getTavilyAccountUsage(decryptedKey);
+          const apiKey = retrieveApiKey(keyInfo.key);
+          const accountData = await getTavilyAccountUsage(apiKey);
           
           if (accountData) {
             return res.json({
@@ -1223,6 +1249,34 @@ app.get('/api/usage/:provider', authenticateToken, async (req, res) => {
           }
         } catch (error) {
           console.error(`❌ Failed to get Tavily account data:`, error.message);
+        }
+      }
+      
+      // If no user key, try to get system Tavily API key and fetch real usage
+      if (!keyInfo.isUserKey) {
+        try {
+          const systemTavilyKey = await getSystemApiKey('tavily');
+          if (systemTavilyKey) {
+            const accountData = await getTavilyAccountUsage(systemTavilyKey);
+            
+            if (accountData) {
+              console.log(`✅ System Tavily usage data retrieved:`, accountData);
+              return res.json({
+                provider: 'tavily',
+                hasApiKey: false, // System key is not a personal API key
+                usageInfo: {
+                  usageCount: accountData.thisMonthUsage,
+                  usageLimit: accountData.searchesPerMonth,
+                  hasFreesLeft: accountData.totalSearchesLeft > 0,
+                  isFreemium: true, // System key is freemium
+                  creditsRemaining: accountData.totalSearchesLeft,
+                  planName: accountData.planName
+                }
+              });
+            }
+          }
+        } catch (error) {
+          console.error(`❌ Failed to get system Tavily account data:`, error.message);
         }
       }
       
@@ -1250,8 +1304,8 @@ app.get('/api/usage/:provider', authenticateToken, async (req, res) => {
         // Get real usage data from SERP API account endpoint
         console.log(`🔍 Fetching real SERP usage data from account API`);
         
-        const decryptedApiKey = decrypt(keyInfo.key);
-        const accountResponse = await axios.get(`https://serpapi.com/account.json?api_key=${decryptedApiKey}`);
+        const apiKey = retrieveApiKey(keyInfo.key);
+        const accountResponse = await axios.get(`https://serpapi.com/account.json?api_key=${apiKey}`);
         
         if (accountResponse.data) {
           const accountData = accountResponse.data;
@@ -1310,20 +1364,30 @@ app.get('/api/usage/:provider', authenticateToken, async (req, res) => {
   }
 });
 
-// Simple CORS Proxy for SERP API - minimal processing
-app.post('/api/proxy/serp-cors', authenticateToken, apiRateLimit, async (req, res) => {
+// Backend API Call Handler for SERP - returns raw data to frontend
+app.post('/api/proxy/serp-raw', authenticateToken, apiRateLimit, async (req, res) => {
   try {
     const { query, num, start, tbs } = req.body;
     
     // Get user's SERP API key
     const apiKeyInfo = await getUserApiKey(req.user.userId, 'serp');
-    if (!apiKeyInfo || !apiKeyInfo.apiKey) {
+    if (!apiKeyInfo || !apiKeyInfo.key) {
       return res.status(400).json({ error: 'SERP API key not found' });
     }
     
-    const apiKey = apiKeyInfo.apiKey;
+    let apiKey = retrieveApiKey(apiKeyInfo.key);
     
-    // Simple API call - no processing
+    // If retrieval fails, we can't proceed
+    if (!apiKey) {
+      console.log('🔄 SERP API key retrieval failed - all methods exhausted');
+      return res.status(400).json({ 
+        error: 'API key not found. Please contact support.',
+        requiresReupload: true,
+        provider: 'serp'
+      });
+    }
+    
+    // Build request parameters
     const params = new URLSearchParams({
       api_key: apiKey,
       engine: 'google',
@@ -1336,35 +1400,93 @@ app.post('/api/proxy/serp-cors', authenticateToken, apiRateLimit, async (req, re
       params.append('tbs', tbs);
     }
     
-    console.log(`🔗 [CORS PROXY] Forwarding SERP API call: ${query}`);
+    console.log(`🔗 [BACKEND API] Making SERP API call: ${query}`);
     
     const serpResponse = await axios.get(`https://serpapi.com/search?${params}`, {
       timeout: 30000
     });
     
-    // Return raw results - no processing
-    res.json(serpResponse.data);
+    // Return raw data for frontend processing
+    res.json({
+      success: true,
+      rawData: serpResponse.data,
+      query: query,
+      page: Math.floor((start || 0) / (num || 10)) + 1
+    });
     
   } catch (error) {
-    console.error('SERP CORS proxy error:', error.message);
+    console.error('SERP API call error:', error.message);
     res.status(500).json({ error: 'SERP API call failed' });
   }
 });
 
-// Simple CORS Proxy for Tavily API - minimal processing  
-app.post('/api/proxy/tavily-cors', authenticateToken, apiRateLimit, async (req, res) => {
+// Async API Key Re-storage Endpoint - handles retrieval failures
+app.post('/api/async/re-store-keys', authenticateToken, apiRateLimit, async (req, res) => {
+  try {
+    const { provider } = req.body;
+    
+    console.log(`🔄 [ASYNC] Re-storing ${provider} API key for user ${req.user.userId}`);
+    
+    // Get user's API key
+    const apiKeyInfo = await getUserApiKey(req.user.userId, provider);
+    if (!apiKeyInfo || !apiKeyInfo.key) {
+      return res.status(400).json({ error: `${provider} API key not found` });
+    }
+    
+    // Try to retrieve with current key
+    let apiKey = retrieveApiKey(apiKeyInfo.key);
+    
+    if (!apiKey) {
+      // If retrieval fails, we need the user to re-upload the key
+      return res.status(400).json({ 
+        error: 'API key not found. Please re-upload your API key in settings.',
+        requiresReupload: true
+      });
+    }
+    
+    // If retrieval succeeded, store with current format (plain text)
+    const reStoredKey = storeApiKey(apiKey);
+    
+    // Update the key in database
+    await updateUserApiKey(req.user.userId, provider, reStoredKey);
+    
+    console.log(`✅ [ASYNC] Successfully re-stored ${provider} API key for user ${req.user.userId}`);
+    
+    res.json({ 
+      success: true, 
+      message: `${provider} API key re-stored successfully` 
+    });
+    
+  } catch (error) {
+    console.error(`❌ [ASYNC] Error re-storing ${req.body.provider} API key:`, error);
+    res.status(500).json({ error: 'Failed to re-store API key' });
+  }
+});
+
+// Backend API Call Handler for Tavily - returns raw data to frontend
+app.post('/api/proxy/tavily-raw', authenticateToken, apiRateLimit, async (req, res) => {
   try {
     const { query, search_depth, max_results } = req.body;
     
     // Get user's Tavily API key
     const apiKeyInfo = await getUserApiKey(req.user.userId, 'tavily');
-    if (!apiKeyInfo || !apiKeyInfo.apiKey) {
+    if (!apiKeyInfo || !apiKeyInfo.key) {
       return res.status(400).json({ error: 'Tavily API key not found' });
     }
     
-    const apiKey = apiKeyInfo.apiKey;
+    let apiKey = retrieveApiKey(apiKeyInfo.key);
     
-    console.log(`🔗 [CORS PROXY] Forwarding Tavily API call: ${query}`);
+    // If retrieval fails, we can't proceed
+    if (!apiKey) {
+      console.log('🔄 Tavily API key retrieval failed - all methods exhausted');
+      return res.status(400).json({ 
+        error: 'API key not found. Please contact support.',
+        requiresReupload: true,
+        provider: 'tavily'
+      });
+    }
+    
+    console.log(`🔗 [BACKEND API] Making Tavily API call: ${query}`);
     
     const tavilyResponse = await axios.post('https://api.tavily.com/search', {
       api_key: apiKey,
@@ -1378,12 +1500,45 @@ app.post('/api/proxy/tavily-cors', authenticateToken, apiRateLimit, async (req, 
       timeout: 30000
     });
     
-    // Return raw results - no processing
-    res.json(tavilyResponse.data);
+    // Return raw data for frontend processing
+    res.json({
+      success: true,
+      rawData: tavilyResponse.data,
+      query: query
+    });
     
   } catch (error) {
-    console.error('Tavily CORS proxy error:', error.message);
+    console.error('Tavily API call error:', error.message);
     res.status(500).json({ error: 'Tavily API call failed' });
+  }
+});
+
+// Clear API Keys Endpoint - for debugging/restoration
+app.post('/api/admin/clear-api-keys', authenticateToken, apiRateLimit, async (req, res) => {
+  try {
+    const userId = req.user.userId;
+    console.log(`🧹 [ADMIN] Clearing API keys for user: ${userId}`);
+    
+    // Clear API keys for the user
+    const updateData = {
+      serpApiKey: '',
+      tavilyApiKey: '',
+      serpUsageTracking: '{"searchesUsed": 0, "creditsRemaining": 100}',
+      tavilyUsageCount: 0,
+      tavilyUsageLimit: 20
+    };
+    
+    await databases.updateDocument(DATABASE_ID, USER_COLLECTION_ID, userId, updateData);
+    
+    console.log(`✅ [ADMIN] API keys cleared for user: ${userId}`);
+    res.json({ 
+      success: true, 
+      message: 'API keys cleared successfully. Please re-upload your API keys in settings.' 
+    });
+    
+  } catch (error) {
+    console.error('❌ [ADMIN] Error clearing API keys:', error);
+    res.status(500).json({ error: 'Failed to clear API keys' });
   }
 });
 
@@ -1410,7 +1565,7 @@ app.post('/api/proxy/search-jobs', authenticateToken, jobSearchRateLimit, async 
 
     console.log(`🔍 Job search request: ${query} in ${location} on ${jobBoard} via ${provider}`);
 
-    // Get user's encrypted API key for the provider with usage info
+    // Get user's API key for the provider with usage info
     console.log(`🔑 [DEBUG] Getting API key for user ${req.user.userId}, provider: ${provider}`);
     const keyInfo = await getUserApiKey(req.user.userId, provider);
     console.log(`🔑 [DEBUG] API key result:`, keyInfo ? 'Found' : 'Not found');
@@ -1431,10 +1586,10 @@ app.post('/api/proxy/search-jobs', authenticateToken, jobSearchRateLimit, async 
       }
     }
 
-    // Decrypt the API key (or use system key for Tavily freemium)
+    // Retrieve the API key (or use system key for Tavily freemium)
     let apiKey;
     if (provider === 'tavily' && keyInfo.key === 'SYSTEM_KEY') {
-      // Use encrypted system Tavily API key from database
+      // Use system Tavily API key from database
       apiKey = await getSystemApiKey('tavily');
       if (!apiKey) {
         console.error('❌ System Tavily API key not found in database');
@@ -1443,9 +1598,9 @@ app.post('/api/proxy/search-jobs', authenticateToken, jobSearchRateLimit, async 
           code: 'MISSING_SYSTEM_API_KEY'
         });
       }
-      console.log(`🆓 Using encrypted system Tavily API key for freemium user ${req.user.userId} (${keyInfo.usageCount + 1}/${keyInfo.usageLimit})`);
+      console.log(`🆓 Using system Tavily API key for freemium user ${req.user.userId} (${keyInfo.usageCount + 1}/${keyInfo.usageLimit})`);
     } else {
-      apiKey = decrypt(keyInfo.key);
+      apiKey = retrieveApiKey(keyInfo.key);
     }
 
     let searchResults = [];
@@ -1531,8 +1686,9 @@ app.post('/api/proxy/search-jobs', authenticateToken, jobSearchRateLimit, async 
         break;
     }
     
-    // Add time filter to query for Tavily (SERP handles it separately)
-    if (provider === 'tavily' && timeFilter && timeFilter !== 'anytime') {
+    // Tavily doesn't use query-based time filters - we'll use the days parameter in the API call
+    // SERP uses query-based time filters, so we add them to the query
+    if (provider === 'serp' && timeFilter && timeFilter !== 'anytime') {
       const timeFilterMapping = {
         'day': 'tbs=qdr:d',
         'week': 'tbs=qdr:w', 
@@ -1554,23 +1710,45 @@ app.post('/api/proxy/search-jobs', authenticateToken, jobSearchRateLimit, async 
 
     // Use the appropriate search engine
     if (provider === 'tavily') {
-      // Tavily search
-      const tavilyResponse = await axios.post('https://api.tavily.com/search', {
+      // Tavily search with proper time filtering
+      const tavilyParams = {
         api_key: apiKey,
         query: jobBoardQuery,
         search_depth: 'basic',
         include_answer: false,
         include_images: false,
         include_raw_content: false,
-        max_results: 50
-      }, {
+        max_results: 100
+      };
+      
+      // Add days parameter for time filtering (Tavily's way, not Google's tbs syntax)
+      if (timeFilter && timeFilter !== 'anytime') {
+        const daysMapping = {
+          'day': 1,
+          'week': 7, 
+          'month': 30,
+          'year': 365,
+          'qdr:d': 1,
+          'qdr:w': 7,
+          'qdr:m': 30,
+          'qdr:y': 365
+        };
+        
+        const days = daysMapping[timeFilter];
+        if (days) {
+          tavilyParams.days = days;
+          console.log(`📅 Using Tavily days filter: ${days} days`);
+        }
+      }
+      
+      const tavilyResponse = await axios.post('https://api.tavily.com/search', tavilyParams, {
         timeout: 30000,
         headers: {
           'Content-Type': 'application/json'
         }
       });
 
-      // Process Tavily results into job format
+      // Return raw Tavily data for frontend processing
       const tavilyResults = tavilyResponse.data.results || [];
       
       // Debug: Log first result to see available fields
@@ -1579,127 +1757,94 @@ app.post('/api/proxy/search-jobs', authenticateToken, jobSearchRateLimit, async 
         console.log(`🔍 Sample Tavily result:`, JSON.stringify(tavilyResults[0], null, 2));
       }
       
-      searchResults = tavilyResults.map(result => {
-        const cleanTitle = cleanJobTitle(result.title, 'tavily', jobBoard);
-        
-        // Try to extract date from various possible fields
-        let datePosted = 'Recently';
-        if (result.published_date) {
-          datePosted = result.published_date;
-        } else if (result.date) {
-          datePosted = result.date;
-        } else if (result.timestamp) {
-          datePosted = new Date(result.timestamp).toLocaleDateString();
-        }
-        
-        // Enhanced company extraction for Tavily Greenhouse results
-        let company = extractCompanyFromUrl(result.url) || extractCompanyFromJobBoard(jobBoard);
-        
-        // Clean up problematic company names
-        if (company) {
-          company = company
-            .replace(/\?error=true/i, '')
-            .replace(/\?.*$/, '') // Remove query parameters
-            .replace(/^embed$/i, 'Company') // Replace "Embed" with generic
-            .replace(/^www\./i, '')
-            .replace(/\.com$/i, '');
-            
-          // Capitalize properly
-          if (company.length > 1) {
-            company = company.charAt(0).toUpperCase() + company.slice(1).toLowerCase();
-          }
-        }
-        
-        return {
-          title: cleanTitle,
-          company: company,
+      // Return raw Tavily data with metadata for frontend processing
+      searchResults = tavilyResults.map(result => ({
+        ...result, // Raw Tavily data
+        _metadata: {
+          jobBoard: jobBoard,
           location: location,
-          url: result.url,
-          description: result.content || '',
-          datePosted: datePosted,
-          source: jobBoard
-        };
-      });
+          timeFilter: timeFilter,
+          searchQuery: jobBoardQuery
+        }
+      }));
 
     } else if (provider === 'serp') {
-      // SERP API search with pagination to get 100 results
+      // SERP API search with single call to get 100 results
       let allOrganicResults = [];
-      const maxPages = 10; // Get up to 10 pages (100 results) - optimized for concurrency
-      const resultsPerPage = 10; // Google typically returns 10 per page
       
-      for (let page = 0; page < maxPages; page++) {
-        const start = page * resultsPerPage;
-        const params = new URLSearchParams({
-          api_key: apiKey,
-          engine: 'google',
-          q: jobBoardQuery,
-          num: '10', // Google's default per page
-          start: start.toString()
-        });
+      console.log(`📊 [SERP DEBUG] Making single SERP API call for 100 results`);
+      console.log(`📊 [SERP DEBUG] Job board query: "${jobBoardQuery}"`);
+      console.log(`📊 [SERP DEBUG] Time filter: ${timeFilter || 'none'}`);
+      console.log(`📊 [SERP DEBUG] API key found and valid: ${apiKey ? 'Yes' : 'No'}`);
+      console.log(`📊 [SERP DEBUG] User ID: ${req.user.userId}`);
+      
+      // Single API call with num=100 (max per call)
+      const params = new URLSearchParams({
+        api_key: apiKey,
+        engine: 'google',
+        q: jobBoardQuery,
+        num: '100', // Request 100 results in a single call (max allowed)
+        start: '0',
+        filter: '0' // Include near-duplicates to get more results
+      });
 
-        if (timeFilter && timeFilter !== 'anytime') {
-          const timeFilters = {
-            'day': 'qdr:d',
-            'week': 'qdr:w', 
-            'month': 'qdr:m',
-            'year': 'qdr:y',
-            'qdr:d': 'qdr:d',
-            'qdr:w': 'qdr:w',
-            'qdr:m': 'qdr:m',
-            'qdr:y': 'qdr:y'
-          };
-          params.append('tbs', timeFilters[timeFilter] || timeFilter);
-        }
+      if (timeFilter && timeFilter !== 'anytime') {
+        const timeFilters = {
+          'day': 'qdr:d',
+          'week': 'qdr:w', 
+          'month': 'qdr:m',
+          'year': 'qdr:y',
+          'qdr:d': 'qdr:d',
+          'qdr:w': 'qdr:w',
+          'qdr:m': 'qdr:m',
+          'qdr:y': 'qdr:y'
+        };
+        params.append('tbs', timeFilters[timeFilter] || timeFilter);
+      }
 
-        console.log(`📊 [SERP DEBUG] Fetching page ${page + 1} (start: ${start})`);
+      console.log(`📊 [SERP DEBUG] Making API call for up to 100 results at once`);
+      console.log(`📊 [SERP DEBUG] Full API URL: https://serpapi.com/search?${params}`);
+      
+      try {
+      const serpResponse = await axios.get(`https://serpapi.com/search?${params}`, {
+          timeout: 60000 // Increased timeout for larger response
+      });
+
+      const organicResults = serpResponse.data.organic_results || [];
+        const searchInformation = serpResponse.data.search_information || {};
+        const serpMetadata = serpResponse.data.search_metadata || {};
+        const pagination = serpResponse.data.serpapi_pagination || {};
         
-        try {
-          const serpResponse = await axios.get(`https://serpapi.com/search?${params}`, {
-            timeout: 30000
-          });
-
-          const organicResults = serpResponse.data.organic_results || [];
-          const searchInformation = serpResponse.data.search_information || {};
-          
-          console.log(`📊 [SERP DEBUG] Page ${page + 1} results: ${organicResults.length}`);
-          console.log(`📊 [SERP DEBUG] Total available: ${searchInformation.total_results || 'unknown'}`);
-          
-          if (organicResults.length === 0) {
-            console.log(`📊 [SERP DEBUG] No more results on page ${page + 1}, stopping pagination`);
-            break;
-          }
-          
-          allOrganicResults.push(...organicResults);
-          
-          // If we got less than 10 results, we've reached the end
-          if (organicResults.length < resultsPerPage) {
-            console.log(`📊 [SERP DEBUG] Reached end of results (got ${organicResults.length} < ${resultsPerPage})`);
-            break;
-          }
-          
-          // Progress tracking
-          if ((page + 1) % 5 === 0) {
-            console.log(`📊 [SERP DEBUG] Progress: ${page + 1}/${maxPages} pages, ${allOrganicResults.length} total results`);
-          }
-          
-          // Small delay between requests to be respectful to the API
-          await new Promise(resolve => setTimeout(resolve, 100));
-          
-        } catch (pageError) {
-          console.error(`❌ [SERP DEBUG] Error fetching page ${page + 1}:`, pageError.message);
-          break; // Stop pagination on error
+        console.log(`📊 [SERP DEBUG] Results received: ${organicResults.length}`);
+        console.log(`📊 [SERP DEBUG] Total available: ${searchInformation.total_results || 'unknown'}`);
+        console.log(`📊 [SERP DEBUG] Has pagination next: ${pagination.next ? 'Yes' : 'No'}`);
+        console.log(`📊 [SERP DEBUG] Pagination next URL: ${pagination.next || 'None'}`);
+        console.log(`📊 [SERP DEBUG] Search metadata:`, JSON.stringify(serpMetadata, null, 2));
+        console.log(`📊 [SERP DEBUG] First few results:`, organicResults.slice(0, 3).map(r => ({ title: r.title, link: r.link })));
+        
+        if (organicResults.length === 0) {
+          console.log(`📊 [SERP DEBUG] No results found`);
+        } else {
+          console.log(`📊 [SERP DEBUG] Successfully retrieved ${organicResults.length} results in a single call`);
+          allOrganicResults = organicResults; // Direct assignment, no need to push
         }
+        
+      } catch (error) {
+        console.error(`❌ [SERP DEBUG] Error fetching results:`, error.message);
+        console.error(`❌ [SERP DEBUG] Error details:`, error.response?.data || error);
       }
       
       console.log(`📊 [SERP DEBUG] Total organic results collected: ${allOrganicResults.length}`);
+      console.log(`📊 [SERP DEBUG] First result: ${allOrganicResults.length > 0 ? allOrganicResults[0].title : 'None'}`);
+      console.log(`📊 [SERP DEBUG] Last result: ${allOrganicResults.length > 0 ? allOrganicResults[allOrganicResults.length - 1].title : 'None'}`);
       
       // Return raw results for frontend processing (minimal backend processing)
       searchResults = allOrganicResults.map(result => ({
         title: result.title || '',
         company: '', // Let frontend extract company
-        location: location,
+          location: location,
         url: result.link || '',
-        description: result.snippet || '',
+          description: result.snippet || '',
         datePosted: result.date || 'Recently',
         source: jobBoard,
         // Include raw data for frontend processing
@@ -1719,16 +1864,28 @@ app.post('/api/proxy/search-jobs', authenticateToken, jobSearchRateLimit, async 
     console.log(`📊 [BACKEND DEBUG] Returning ${searchResults.length} raw results for frontend processing`);
     
     // Only basic validation - frontend will do all the heavy processing
-    searchResults = searchResults.filter(job => {
-      return job.title && job.url && job.title.length > 3;
-    });
+    // For Tavily: results are raw API data with title/url at root level
+    // For SERP: results are processed job objects
+    if (provider === 'tavily') {
+      // Tavily results are raw API data - minimal filtering
+      searchResults = searchResults.filter(result => {
+        return result.title && result.url && result.title.length > 3;
+      });
+    } else {
+      // SERP results are processed job objects
+      searchResults = searchResults.filter(job => {
+        return job.title && job.url && job.title.length > 3;
+      });
+    }
     
     console.log(`📊 [BACKEND DEBUG] After basic filtering: ${searchResults.length} results`);
 
     // Increment usage tracking after successful search (only for freemium/system keys)
     // For Tavily: Only increment if using system key (freemium), not user's own key
-    // For SERP: Always increment since user is always using their own key
+    // For SERP: Only increment once per search request (not per page)
     if (provider === 'serp') {
+      // Only increment once per search request, not per page of results
+      console.log(`🎯 Incrementing SERP usage once for entire search (all pages)`);
       await incrementApiUsage(req.user.userId, provider);
     } else if (provider === 'tavily') {
       // Only increment Tavily usage if user was using system key (freemium)
@@ -2336,12 +2493,12 @@ app.post('/api/save-filter', authenticateToken, async (req, res) => {
       const createSheetResponse = await fetch(
         `https://sheets.googleapis.com/v4/spreadsheets/${sheetId}:batchUpdate`,
         {
-          method: 'POST',
-          headers: {
+      method: 'POST',
+      headers: {
             'Authorization': `Bearer ${accessToken}`,
             'Content-Type': 'application/json'
-          },
-          body: JSON.stringify({
+      },
+      body: JSON.stringify({
             requests: [{
               addSheet: {
                 properties: {
@@ -2372,10 +2529,14 @@ app.post('/api/save-filter', authenticateToken, async (req, res) => {
     }
 
     // Check if filter already exists (by ID)
+    console.log('🔍 [SAVE-FILTER] Checking for existing filter with ID:', filter.id);
+    console.log('🔍 [SAVE-FILTER] Existing filters:', existingFilters.map(f => ({ id: f.id, name: f.name })));
     const existingFilterIndex = existingFilters.findIndex(f => f.id === filter.id);
+    console.log('🔍 [SAVE-FILTER] Existing filter index:', existingFilterIndex);
     
     if (existingFilterIndex >= 0) {
       // Update existing filter
+      console.log('✅ [SAVE-FILTER] Updating existing filter at index:', existingFilterIndex);
       existingFilters[existingFilterIndex] = {
         id: filter.id,
         name: filter.name,
@@ -2386,6 +2547,7 @@ app.post('/api/save-filter', authenticateToken, async (req, res) => {
       };
     } else {
       // Add new filter
+      console.log('➕ [SAVE-FILTER] Adding new filter with ID:', filter.id);
       existingFilters.push({
         id: filter.id,
         name: filter.name,
@@ -2450,7 +2612,529 @@ app.post('/api/save-filter', authenticateToken, async (req, res) => {
   }
 });
 
+// Delete filter endpoint
+app.post('/api/delete-filter', authenticateToken, async (req, res) => {
+  try {
+    console.log('🗑️ [DELETE-FILTER] Received delete request');
+    console.log('🗑️ [DELETE-FILTER] Request body:', req.body);
+    
+    const { sheetUrl, filterId } = req.body;
+    
+    if (!sheetUrl || !filterId) {
+      console.error('❌ [DELETE-FILTER] Missing required parameters');
+      return res.status(400).json({ error: 'Missing sheet URL or filter ID' });
+    }
+
+    // Extract sheet ID from URL
+    const sheetIdMatch = sheetUrl.match(/\/spreadsheets\/d\/([a-zA-Z0-9-_]+)/);
+    if (!sheetIdMatch) {
+      return res.status(400).json({ error: 'Invalid Google Sheets URL' });
+    }
+
+    const sheetId = sheetIdMatch[1];
+    const accessToken = await getValidAccessToken(req.user.userId);
+    
+    if (!accessToken) {
+      console.error('❌ [DELETE-FILTER] No valid Google access token available');
+      return res.status(400).json({ 
+        error: 'Google Sheets integration not configured. Please contact support.' 
+      });
+    }
+
+    // First check if the Filters sheet exists
+    const sheetInfoResponse = await fetch(
+      `https://sheets.googleapis.com/v4/spreadsheets/${sheetId}`,
+      {
+        headers: { 'Authorization': `Bearer ${accessToken}` }
+      }
+    );
+    
+    if (!sheetInfoResponse.ok) {
+      const errorText = await sheetInfoResponse.text();
+      console.error('❌ [DELETE-FILTER] Cannot access spreadsheet:', errorText);
+      return res.status(400).json({ 
+        error: 'Cannot access spreadsheet. Please check the URL and permissions.', 
+        details: errorText 
+      });
+    }
+    
+    const sheetInfo = await sheetInfoResponse.json();
+    const filtersSheetExists = sheetInfo.sheets && sheetInfo.sheets.some(sheet => sheet.properties.title === 'Filters');
+    
+    if (!filtersSheetExists) {
+      console.log('❌ [DELETE-FILTER] Filters sheet does not exist');
+      return res.status(400).json({ error: 'Filters sheet does not exist in this spreadsheet' });
+    }
+    
+    console.log('✅ [DELETE-FILTER] Filters sheet exists, proceeding with deletion');
+
+    // Read existing filters
+    const filtersResponse = await fetch(
+      `https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values/Filters!A1:Z1000`,
+      {
+        headers: { 'Authorization': `Bearer ${accessToken}` }
+      }
+    );
+
+    if (!filtersResponse.ok) {
+      const errorText = await filtersResponse.text();
+      console.error('❌ [DELETE-FILTER] Cannot access Filters sheet:', errorText);
+      return res.status(400).json({ 
+        error: 'Cannot access Filters sheet', 
+        details: errorText 
+      });
+    }
+
+    const filtersData = await filtersResponse.json();
+    console.log('📊 [DELETE-FILTER] Filters data received:', filtersData);
+    
+    if (!filtersData.values || filtersData.values.length <= 1) {
+      console.log('❌ [DELETE-FILTER] No filters found to delete');
+      return res.status(400).json({ error: 'No filters found to delete' });
+    }
+
+    // Parse existing filters (skip header row)
+    const existingFilters = filtersData.values.slice(1).map(row => ({
+      id: row[0],
+      name: row[1],
+      locations: row[2] || '',
+      applicationStatuses: row[3] || '',
+      jobTitleKeywords: row[4] || '',
+      createdAt: row[5] || new Date().toISOString()
+    }));
+
+    // Find and remove the filter
+    console.log('🔍 [DELETE-FILTER] Looking for filter with ID:', filterId);
+    console.log('🔍 [DELETE-FILTER] Available filters:', existingFilters.map(f => ({ id: f.id, name: f.name })));
+    
+    const filterIndex = existingFilters.findIndex(f => f.id === filterId);
+    console.log('🔍 [DELETE-FILTER] Filter index found:', filterIndex);
+    
+    if (filterIndex === -1) {
+      console.error('❌ [DELETE-FILTER] Filter not found in existing filters');
+      return res.status(400).json({ error: 'Filter not found' });
+    }
+
+    console.log('✅ [DELETE-FILTER] Removing filter at index:', filterIndex);
+    const removedFilter = existingFilters[filterIndex];
+    console.log('🗑️ [DELETE-FILTER] Removed filter:', { id: removedFilter.id, name: removedFilter.name });
+    
+    existingFilters.splice(filterIndex, 1);
+    console.log('📊 [DELETE-FILTER] Remaining filters count:', existingFilters.length);
+
+    // Prepare data for writing to sheet
+    const sheetData = [
+      ['ID', 'Name', 'Locations', 'Application Statuses', 'Job Title Keywords', 'Created At'],
+      ...existingFilters.map(f => [
+        f.id,
+        f.name,
+        f.locations,
+        f.applicationStatuses,
+        f.jobTitleKeywords,
+        f.createdAt
+      ])
+    ];
+    
+    // If no filters remain, we still need to write the header row
+    if (existingFilters.length === 0) {
+      console.log('📝 [DELETE-FILTER] No filters remaining, writing header only');
+    }
+
+    // Write updated filters back to sheet
+    console.log('📝 [DELETE-FILTER] Writing updated filters to sheet:');
+    console.log('📝 [DELETE-FILTER] Sheet data:', sheetData);
+    console.log('📝 [DELETE-FILTER] Filters count:', existingFilters.length);
+    
+    // First, clear the entire Filters sheet using the proper CLEAR method
+    let clearResponse;
+    let clearAttempts = 0;
+    const maxClearAttempts = 3;
+    
+    while (clearAttempts < maxClearAttempts) {
+      clearResponse = await fetch(
+        `https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values/Filters!A1:Z1000:clear`,
+        {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${accessToken}`,
+            'Content-Type': 'application/json'
+          }
+        }
+      );
+
+      if (clearResponse.ok) {
+        console.log('✅ [DELETE-FILTER] Sheet cleared successfully');
+        break;
+      } else {
+        clearAttempts++;
+        const errorText = await clearResponse.text();
+        console.error(`❌ [DELETE-FILTER] Error clearing sheet (attempt ${clearAttempts}/${maxClearAttempts}):`, errorText);
+        
+        if (clearAttempts >= maxClearAttempts) {
+          return res.status(500).json({ 
+            error: 'Failed to clear Filters sheet after multiple attempts',
+            details: errorText
+          });
+        }
+        
+        // Wait before retry
+        await new Promise(resolve => setTimeout(resolve, 1000));
+      }
+    }
+
+    // Then write the new data with retry mechanism
+    let writeResponse;
+    let writeAttempts = 0;
+    const maxWriteAttempts = 3;
+    
+    while (writeAttempts < maxWriteAttempts) {
+      writeResponse = await fetch(
+        `https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values/Filters!A1:Z1000?valueInputOption=RAW`,
+        {
+          method: 'PUT',
+          headers: {
+            'Authorization': `Bearer ${accessToken}`,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            values: sheetData
+          })
+        }
+      );
+
+      if (writeResponse.ok) {
+        console.log('✅ [DELETE-FILTER] Data written successfully');
+        break;
+      } else {
+        writeAttempts++;
+        const errorText = await writeResponse.text();
+        console.error(`❌ [DELETE-FILTER] Error writing data (attempt ${writeAttempts}/${maxWriteAttempts}):`, errorText);
+        
+        if (writeAttempts >= maxWriteAttempts) {
+          return res.status(500).json({ 
+            error: 'Failed to write updated filters after multiple attempts',
+            details: errorText
+          });
+        }
+        
+        // Wait before retry
+        await new Promise(resolve => setTimeout(resolve, 1000));
+      }
+    }
+
+    console.log(`📊 [DELETE] Write response status: ${writeResponse.status}`);
+    console.log(`📊 [DELETE] Write response ok: ${writeResponse.ok}`);
+
+    if (!writeResponse.ok) {
+      const errorText = await writeResponse.text();
+      console.error('❌ [DELETE] Error writing updated filters:', errorText);
+      return res.status(500).json({ error: 'Failed to update Filters sheet' });
+    }
+
+    const writeResult = await writeResponse.json();
+    console.log(`📊 [DELETE] Write result:`, writeResult);
+
+    // Verify the write was successful by checking the updated cells count
+    if (writeResult.updatedCells && writeResult.updatedCells > 0) {
+      console.log(`✅ Filter deleted successfully: ${filterId} (${writeResult.updatedCells} cells updated)`);
+      res.json({
+        success: true,
+        message: 'Filter deleted successfully',
+        deletedFilterId: filterId,
+        updatedCells: writeResult.updatedCells
+      });
+    } else {
+      console.error(`❌ [DELETE] Write succeeded but no cells were updated. Write result:`, writeResult);
+      
+      // Try to verify the deletion by reading the sheet back
+      const verifyResponse = await fetch(
+        `https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values/Filters!A1:Z1000`,
+        {
+          headers: { 'Authorization': `Bearer ${accessToken}` }
+        }
+      );
+      
+      if (verifyResponse.ok) {
+        const verifyData = await verifyResponse.json();
+        const remainingFilters = verifyData.values ? verifyData.values.slice(1) : [];
+        const filterStillExists = remainingFilters.some(row => row[0] === filterId);
+        
+        if (filterStillExists) {
+          console.error(`❌ [DELETE] Filter still exists in sheet after deletion attempt`);
+          res.status(500).json({ 
+            error: 'Filter deletion failed - filter still exists in Google Sheets',
+            details: writeResult
+          });
+        } else {
+          console.log(`✅ [DELETE] Filter successfully deleted (verified by reading sheet)`);
+          res.json({
+            success: true,
+            message: 'Filter deleted successfully (verified)',
+            deletedFilterId: filterId,
+            updatedCells: writeResult.updatedCells || 0
+          });
+        }
+      } else {
+        res.status(500).json({ 
+          error: 'Filter deletion failed - no cells were updated in Google Sheets',
+          details: writeResult
+        });
+      }
+    }
+
+  } catch (error) {
+    console.error('Delete filter error:', error);
+    res.status(500).json({ error: 'Failed to delete filter' });
+  }
+});
+
+// Replace sheet data endpoint (for duplicate removal)
+app.post('/api/replace-sheet-data', authenticateToken, async (req, res) => {
+  try {
+    const { sheetUrl, jobs } = req.body;
+    
+    if (!sheetUrl || !jobs || !Array.isArray(jobs)) {
+      return res.status(400).json({ error: 'Sheet URL and jobs data are required' });
+    }
+
+    // Extract sheet ID from URL
+    const sheetIdMatch = sheetUrl.match(/\/spreadsheets\/d\/([a-zA-Z0-9-_]+)/);
+    if (!sheetIdMatch) {
+      return res.status(400).json({ error: 'Invalid Google Sheets URL' });
+    }
+    const sheetId = sheetIdMatch[1];
+
+    // Get Google access token using the same method as filters (system service account)
+    console.log(`🔗 [REPLACE] Getting Google access token for user: ${req.user.userId}`);
+    const accessToken = await getValidAccessToken(req.user.userId);
+    
+    if (!accessToken) {
+      console.log(`❌ [REPLACE] Failed to get Google access token for user: ${req.user.userId}`);
+      return res.status(400).json({ error: 'Google Sheets integration not configured. Please contact support.' });
+    }
+    
+    console.log(`✅ [REPLACE] Google access token obtained successfully`);
+
+    // Prepare data for replacement
+    const headers = ['Job Title', 'Company', 'Location', 'Job URL', 'Application Status', 'Date Posted', 'Source'];
+    const jobRows = jobs.map(job => [
+      job.title || '',
+      job.company || '',
+      job.location || '',
+      job.url || '',
+      job.applicationStatus || 'Not Applied',
+      job.datePosted || '',
+      job.source || ''
+    ]);
+    const dataToReplace = [headers, ...jobRows];
+
+    // First, check if we can access the sheet
+    console.log(`🔍 [REPLACE] Checking sheet access for: ${sheetId}`);
+    try {
+      const testResponse = await fetch(
+        `https://sheets.googleapis.com/v4/spreadsheets/${sheetId}?fields=properties.title`,
+        {
+          headers: {
+            'Authorization': `Bearer ${accessToken}`,
+            'Content-Type': 'application/json'
+          }
+        }
+      );
+      console.log(`✅ [REPLACE] Sheet access confirmed: ${testResponse.data?.properties?.title || 'Unknown'}`);
+    } catch (accessError) {
+      console.error('❌ [REPLACE] Cannot access sheet:', accessError.response?.data || accessError.message);
+      return res.status(400).json({ 
+        error: 'Cannot access your Google Sheet. Please ensure the service account has Editor access to the sheet.' 
+      });
+    }
+
+    // Replace all data in the sheet
+    const range = 'A1:Z1000'; // Large range to clear existing data
+    console.log(`🔗 [REPLACE] Replacing sheet data:`, {
+      sheetId: sheetId,
+      range: range,
+      dataRows: dataToReplace.length,
+      jobsCount: jobs.length
+    });
+    
+    try {
+      const response = await fetch(
+        `https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values/${range}?valueInputOption=RAW`,
+        {
+          method: 'PUT',
+          headers: {
+            'Authorization': `Bearer ${accessToken}`,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            values: dataToReplace
+          })
+        }
+      );
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        console.error('❌ [REPLACE] Google Sheets API error:', errorText);
+        return res.status(400).json({ 
+          error: 'Failed to replace Google Sheets data. Please ensure the service account has Editor access to the sheet.' 
+        });
+      }
+
+      console.log(`✅ [REPLACE] Successfully replaced sheet data with ${jobs.length} jobs`);
+      res.json({ 
+        success: true, 
+        message: `Successfully replaced sheet data with ${jobs.length} jobs`,
+        replacedCount: jobs.length
+      });
+    } catch (sheetsError) {
+      console.error('❌ [REPLACE] Google Sheets API error:', sheetsError.message);
+      return res.status(400).json({ 
+        error: 'Failed to replace Google Sheets data. Please ensure the service account has Editor access to the sheet.' 
+      });
+    }
+
+  } catch (error) {
+    console.error('Replace sheet data error:', error);
+    const errorMessage = error.response?.data?.error?.message || error.message || 'Replace failed';
+    res.status(500).json({ error: 'Failed to replace sheet data', details: errorMessage });
+  }
+});
+
 // Read data from Google Sheet
+// Export jobs to Google Sheets
+app.post('/api/export-to-sheets', authenticateToken, async (req, res) => {
+  try {
+    const { sheetUrl, jobs } = req.body;
+    
+    if (!sheetUrl || !jobs || !Array.isArray(jobs)) {
+      return res.status(400).json({ error: 'Sheet URL and jobs data are required' });
+    }
+
+    // Extract sheet ID from URL
+    const sheetIdMatch = sheetUrl.match(/\/spreadsheets\/d\/([a-zA-Z0-9-_]+)/);
+    if (!sheetIdMatch) {
+      return res.status(400).json({ error: 'Invalid Google Sheets URL' });
+    }
+    const sheetId = sheetIdMatch[1];
+
+    // Get Google access token using the same method as filters (system service account)
+    console.log(`🔗 [EXPORT] Getting Google access token for user: ${req.user.userId}`);
+    const accessToken = await getValidAccessToken(req.user.userId);
+    
+    if (!accessToken) {
+      console.log(`❌ [EXPORT] Failed to get Google access token for user: ${req.user.userId}`);
+      return res.status(400).json({ error: 'Google Sheets integration not configured. Please contact support.' });
+    }
+    
+    console.log(`✅ [EXPORT] Google access token obtained successfully`);
+
+    // Prepare data for export
+    const headers = ['Job Title', 'Company', 'Location', 'Job URL', 'Application Status', 'Date Posted', 'Source'];
+    const jobRows = jobs.map(job => [
+      job.title || '',
+      job.company || '',
+      job.location || '',
+      job.url || '',
+      job.applicationStatus || 'Not Applied',
+      job.datePosted || '',
+      job.source || ''
+    ]);
+    const dataToExport = [headers, ...jobRows];
+
+    // First, check if we can access the sheet
+    console.log(`🔗 [EXPORT] Checking sheet access for: ${sheetId}`);
+    try {
+      const testResponse = await axios.get(
+        `https://sheets.googleapis.com/v4/spreadsheets/${sheetId}?fields=properties.title`,
+        {
+          headers: {
+            'Authorization': `Bearer ${accessToken}`,
+            'Content-Type': 'application/json'
+          }
+        }
+      );
+      console.log(`✅ [EXPORT] Sheet access confirmed: ${testResponse.data.properties.title}`);
+    } catch (accessError) {
+      console.error('❌ [EXPORT] Cannot access sheet:', accessError.response?.data || accessError.message);
+      return res.status(400).json({ 
+        error: 'Cannot access your Google Sheet. Please ensure the service account has Editor access to the sheet.' 
+      });
+    }
+
+    // First, check how many rows already exist to append after them
+    console.log(`🔍 [EXPORT] Checking existing data in sheet...`);
+    const checkResponse = await fetch(
+      `https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values/A:A?majorDimension=COLUMNS`,
+      {
+        headers: {
+          'Authorization': `Bearer ${accessToken}`,
+          'Content-Type': 'application/json'
+        }
+      }
+    );
+
+    let startRow = 1; // Default to start from row 1 if no existing data
+    if (checkResponse.ok) {
+      const checkData = await checkResponse.json();
+      if (checkData.values && checkData.values[0]) {
+        startRow = checkData.values[0].length + 1; // Start after last existing row
+        console.log(`📊 [EXPORT] Found ${checkData.values[0].length} existing rows, will append from row ${startRow}`);
+      }
+    }
+
+    // Write to Google Sheets (append mode)
+    const range = `A${startRow}:G${startRow + dataToExport.length - 1}`;
+    console.log(`🔗 [EXPORT] Writing to Google Sheets (append mode):`, {
+      sheetId: sheetId,
+      range: range,
+      startRow: startRow,
+      dataRows: dataToExport.length,
+      jobsCount: jobs.length
+    });
+    
+    try {
+      const response = await fetch(
+        `https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values/${range}?valueInputOption=RAW`,
+        {
+          method: 'PUT',
+          headers: {
+            'Authorization': `Bearer ${accessToken}`,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            values: dataToExport
+          })
+        }
+      );
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        console.error('❌ [EXPORT] Google Sheets API error:', errorText);
+        return res.status(400).json({ 
+          error: 'Failed to write to Google Sheets. Please ensure the service account has Editor access to the sheet.' 
+        });
+      }
+
+      console.log(`✅ [EXPORT] Successfully exported ${jobs.length} jobs to Google Sheets`);
+      res.json({ 
+        success: true, 
+        message: `Successfully exported ${jobs.length} jobs to Google Sheets`,
+        exportedCount: jobs.length
+      });
+    } catch (sheetsError) {
+      console.error('❌ [EXPORT] Google Sheets API error:', sheetsError.message);
+      return res.status(400).json({ 
+        error: 'Failed to write to Google Sheets. Please ensure the service account has Editor access to the sheet.' 
+      });
+    }
+
+  } catch (error) {
+    console.error('Export to Google Sheets error:', error);
+    const errorMessage = error.response?.data?.error?.message || error.message || 'Export failed';
+    res.status(500).json({ error: 'Failed to export to Google Sheets', details: errorMessage });
+  }
+});
+
 app.post('/api/read-sheet', authenticateToken, async (req, res) => {
   try {
     const { sheetUrl, range = 'A:Z' } = req.body;
@@ -2542,7 +3226,7 @@ app.listen(PORT, () => {
   console.log('🛡️ Security features enabled:');
   console.log('  - Helmet security headers');
   console.log('  - Rate limiting');
-  console.log('  - API key encryption');
+  console.log('  - API key security');
   console.log('  - Audit logging');
   console.log('  - JWT authentication');
   console.log('  - Input validation');

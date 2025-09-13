@@ -1823,37 +1823,7 @@ app.post('/api/proxy/search-jobs', authenticateToken, jobSearchRateLimit, async 
         console.log(`📊 [SERP DEBUG] First few results:`, organicResults.slice(0, 3).map(r => ({ title: r.title, link: r.link })));
         
         if (organicResults.length === 0) {
-          console.log(`📊 [SERP DEBUG] No results found with original query`);
-          
-          // Try a fallback query with simpler format
-          console.log(`📊 [SERP DEBUG] Trying fallback query...`);
-          const fallbackQuery = `${query} ${jobBoard} jobs ${location}`;
-          console.log(`📊 [SERP DEBUG] Fallback query: "${fallbackQuery}"`);
-          
-          const fallbackParams = new URLSearchParams({
-            api_key: apiKey,
-            engine: 'google',
-            q: fallbackQuery,
-            num: '50',
-            start: '0',
-            filter: '0'
-          });
-          
-          try {
-            const fallbackResponse = await axios.get(`https://serpapi.com/search?${fallbackParams}`, {
-              timeout: 30000
-            });
-            
-            const fallbackResults = fallbackResponse.data.organic_results || [];
-            console.log(`📊 [SERP DEBUG] Fallback query returned: ${fallbackResults.length} results`);
-            
-            if (fallbackResults.length > 0) {
-              console.log(`📊 [SERP DEBUG] Using fallback results`);
-              allOrganicResults = fallbackResults;
-            }
-          } catch (fallbackError) {
-            console.log(`📊 [SERP DEBUG] Fallback query also failed:`, fallbackError.message);
-          }
+          console.log(`📊 [SERP DEBUG] No results found`);
         } else {
           console.log(`📊 [SERP DEBUG] Successfully retrieved ${organicResults.length} results in a single call`);
           allOrganicResults = organicResults; // Direct assignment, no need to push

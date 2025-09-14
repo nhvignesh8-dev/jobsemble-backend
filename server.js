@@ -1784,6 +1784,10 @@ app.post('/api/proxy/search-jobs', authenticateToken, jobSearchRateLimit, async 
       }
       
       // Return raw Tavily data with metadata for frontend processing
+      console.log(`📊 [TAVILY DEBUG] Raw Tavily results count: ${tavilyResults.length}`);
+      console.log(`📊 [TAVILY DEBUG] Query used: "${jobBoardQuery}"`);
+      console.log(`📊 [TAVILY DEBUG] Time filter: ${timeFilter || 'none'}`);
+      
       searchResults = tavilyResults.map(result => ({
         ...result, // Raw Tavily data
         _metadata: {

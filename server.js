@@ -2535,18 +2535,23 @@ function getJobBoardDomain(boardId) {
     'workable': 'jobs.workable.com',
     'breezyhr': 'breezy.hr',
     'wellfound': 'wellfound.com',
+    'y combinator work at a startup': 'workatastartup.com',
     'ycombinator': 'workatastartup.com',
+    'oracle cloud': 'oraclecloud.com',
     'oracle': 'oraclecloud.com',
+    'workday jobs': 'myworkdayjobs.com',
     'workday': 'myworkdayjobs.com',
     'recruitee': 'recruitee.com',
-    'rippling': '(rippling.com OR rippling-ats.com)',
+    'rippling': '(site:rippling.com OR site:rippling-ats.com)',
     'gusto': 'jobs.gusto.com',
     'smartrecruiters': 'jobs.smartrecruiters.com',
     'jazzhr': 'applytojob.com',
     'jobvite': 'jobvite.com',
     'icims': 'icims.com',
     'builtin': 'builtin.com/job/',
-    'adp': '(workforcenow.adp.com OR myjobs.adp.com)'
+    'adp': '(site:workforcenow.adp.com OR site:myjobs.adp.com)',
+    'jobs subdomain': 'jobs.*',
+    'talent subdomain': 'talent.*'
   };
   return domains[boardId] || boardId;
 }

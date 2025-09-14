@@ -2153,7 +2153,22 @@ function cleanJobTitle(title, provider, jobBoard) {
     /^Jobs?\s+at\s+[^\-]+$/i,
     /^Careers?\s*$/i,
     /^(Jobs?|Apply|Hiring|Open\s+Roles?|Opportunities)$/i,
-    /^(Current\s+job\s+openings?|Available\s+positions?)$/i
+    /^(Current\s+job\s+openings?|Available\s+positions?)$/i,
+    // Generic job search result pages (Tavily specific)
+    /^Product\s+Manager\s+Jobs,?\s+Employment$/i,
+    /^Product\s+Manager\s+Jobs\s+in\s+(the\s+)?United\s+States$/i,
+    /^Product\s+Management\s+Jobs$/i,
+    /^Product\s+Manager$/i,
+    /^Product\s+Manager,?\s+[A-Za-z\s]+\s+job\s+in\s+[A-Za-z\s,]+$/i,
+    // Generic patterns for any job title
+    /^[A-Za-z\s]+\s+Jobs,?\s+Employment$/i,
+    /^[A-Za-z\s]+\s+Jobs\s+in\s+(the\s+)?United\s+States$/i,
+    /^[A-Za-z\s]+\s+Jobs$/i,
+    /^[A-Za-z\s]+,?\s+[A-Za-z\s]+\s+job\s+in\s+[A-Za-z\s,]+$/i,
+    // Company placeholder patterns
+    /^Company$/i,
+    /^United\s+States$/i,
+    /^This\s+week$/i
   ];
   
   for (const pattern of genericPatterns) {

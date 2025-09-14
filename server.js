@@ -2159,6 +2159,28 @@ function cleanJobTitle(title, provider, jobBoard) {
       cleaned = cleaned.replace(/^United\s+States$/i, '');
       cleaned = cleaned.replace(/^This\s+week$/i, '');
     }
+  } else if (jobBoardLower === 'pinpoint') {
+    if (provider === 'tavily') {
+      // Tavily + Pinpoint specific patterns for generic job search result pages
+      cleaned = cleaned.replace(/^Software\s+Engineer\s+USA\s+Jobs,?\s+Employment$/i, '');
+      cleaned = cleaned.replace(/^Software\s+Engineer\s+Jobs\s+in\s+United\s+States$/i, '');
+      cleaned = cleaned.replace(/^US-RSE$/i, '');
+      cleaned = cleaned.replace(/^Software\s+engineer\s+salary\s+in\s+United\s+States$/i, '');
+      cleaned = cleaned.replace(/^Software\s+Engineer\s+Program$/i, '');
+      cleaned = cleaned.replace(/^Software\s+Development$/i, '');
+      cleaned = cleaned.replace(/^Engineering\s+Jobs$/i, '');
+      // Generic patterns for any job title on Pinpoint via Tavily
+      cleaned = cleaned.replace(/^[A-Za-z\s]+\s+USA\s+Jobs,?\s+Employment$/i, '');
+      cleaned = cleaned.replace(/^[A-Za-z\s]+\s+Jobs\s+in\s+United\s+States$/i, '');
+      cleaned = cleaned.replace(/^[A-Za-z\s]+\s+salary\s+in\s+United\s+States$/i, '');
+      cleaned = cleaned.replace(/^[A-Za-z\s]+\s+Program$/i, '');
+      cleaned = cleaned.replace(/^[A-Za-z\s]+\s+Development$/i, '');
+      cleaned = cleaned.replace(/^[A-Za-z\s]+\s+Jobs$/i, '');
+      // Company placeholder patterns specific to Pinpoint
+      cleaned = cleaned.replace(/^Company$/i, '');
+      cleaned = cleaned.replace(/^United\s+States$/i, '');
+      cleaned = cleaned.replace(/^This\s+week$/i, '');
+    }
   }
   
   // PHASE 3: AI-BASED UNIVERSAL PATTERN RECOGNITION

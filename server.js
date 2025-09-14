@@ -2181,6 +2181,47 @@ function cleanJobTitle(title, provider, jobBoard) {
       cleaned = cleaned.replace(/^United\s+States$/i, '');
       cleaned = cleaned.replace(/^This\s+week$/i, '');
     }
+  } else if (jobBoardLower === 'talent-subdomain' || jobBoardLower === 'talent subdomain') {
+    if (provider === 'tavily') {
+      // Tavily + Talent Subdomain AI-based cleaning patterns
+      // Generic learning/educational content patterns
+      cleaned = cleaned.replace(/^What\s+can\s+I\s+learn\s*&\s*what\s+can\s+I\s+do\s+within\s+\d+\s+minutes\?$/i, '');
+      cleaned = cleaned.replace(/^How\s+to\s+[^?]+\?$/i, '');
+      cleaned = cleaned.replace(/^What\s+is\s+[^?]+\?$/i, '');
+      cleaned = cleaned.replace(/^How\s+do\s+I\s+[^?]+\?$/i, '');
+      
+      // GitHub/dataset/technical repository patterns
+      cleaned = cleaned.replace(/^[a-zA-Z0-9\-_]+\/[a-zA-Z0-9\-_]+\s*·\s*Datasets?\s+at\s*\.{3,}$/i, '');
+      cleaned = cleaned.replace(/^[a-zA-Z0-9\-_]+\/[a-zA-Z0-9\-_]+\s*·\s*[^·]+\s*\.{3,}$/i, '');
+      cleaned = cleaned.replace(/^[a-zA-Z0-9\-_]+\/[a-zA-Z0-9\-_]+$/i, '');
+      
+      // Personal names (first name + last name pattern)
+      cleaned = cleaned.replace(/^[A-Z][a-z]+\s+[A-Z][a-z]+$/i, '');
+      
+      // Government/military policy patterns
+      cleaned = cleaned.replace(/^Army\s+[A-Za-z\s]+Policy$/i, '');
+      cleaned = cleaned.replace(/^[A-Za-z\s]+Policy:?\s*Unclassified$/i, '');
+      cleaned = cleaned.replace(/^[A-Za-z\s]+Management\s+[A-Za-z\s]+Compendium$/i, '');
+      cleaned = cleaned.replace(/^[A-Za-z\s]+Policy$/i, '');
+      
+      // Google search help patterns
+      cleaned = cleaned.replace(/^How\s+to\s+stop\s+default\s+Google\s+search\s+from\s+[^?]+\?$/i, '');
+      cleaned = cleaned.replace(/^Google\s+search\s+[^?]+\?$/i, '');
+      
+      // Generic question patterns
+      cleaned = cleaned.replace(/^[A-Z][^?]*\?$/i, '');
+      
+      // Technical documentation patterns
+      cleaned = cleaned.replace(/^[A-Za-z\s]+Abbreviation\s+Compendium$/i, '');
+      cleaned = cleaned.replace(/^[A-Za-z\s]+Documentation$/i, '');
+      cleaned = cleaned.replace(/^[A-Za-z\s]+Guide$/i, '');
+      cleaned = cleaned.replace(/^[A-Za-z\s]+Manual$/i, '');
+      
+      // Company placeholder patterns specific to Talent Subdomain
+      cleaned = cleaned.replace(/^Company$/i, '');
+      cleaned = cleaned.replace(/^United\s+States$/i, '');
+      cleaned = cleaned.replace(/^This\s+week$/i, '');
+    }
   }
   
   // PHASE 3: AI-BASED UNIVERSAL PATTERN RECOGNITION

@@ -2139,6 +2139,26 @@ function cleanJobTitle(title, provider, jobBoard) {
       cleaned = cleaned.replace(/^United\s+States$/i, '');
       cleaned = cleaned.replace(/^This\s+week$/i, '');
     }
+  } else if (jobBoardLower === 'ashby') {
+    if (provider === 'tavily') {
+      // Tavily + Ashby specific patterns for generic job search result pages
+      cleaned = cleaned.replace(/^Product\s+Manager\s+Jobs\s+in\s+(the\s+)?United\s+States$/i, '');
+      cleaned = cleaned.replace(/^Product\s+Manager\s+Jobs\s+in\s+United\s+States$/i, '');
+      cleaned = cleaned.replace(/^Product\s+Management\s+Jobs$/i, '');
+      cleaned = cleaned.replace(/^Product\s+Manager$/i, '');
+      cleaned = cleaned.replace(/^Product\s+Manager,\s+[A-Za-z\s!]+\s+job\s+in\s+[A-Za-z\s,]+$/i, '');
+      cleaned = cleaned.replace(/^Product\s+Manager,\s+[A-Za-z\s!]+\s+in\s+(the\s+)?United\s+States\s+or\s*\.{3,}$/i, '');
+      // Generic patterns for any job title on Ashby via Tavily
+      cleaned = cleaned.replace(/^[A-Za-z\s]+\s+Jobs\s+in\s+(the\s+)?United\s+States$/i, '');
+      cleaned = cleaned.replace(/^[A-Za-z\s]+\s+Jobs\s+in\s+United\s+States$/i, '');
+      cleaned = cleaned.replace(/^[A-Za-z\s]+\s+Jobs$/i, '');
+      cleaned = cleaned.replace(/^[A-Za-z\s]+,\s+[A-Za-z\s!]+\s+job\s+in\s+[A-Za-z\s,]+$/i, '');
+      cleaned = cleaned.replace(/^[A-Za-z\s]+,\s+[A-Za-z\s!]+\s+in\s+(the\s+)?United\s+States\s+or\s*\.{3,}$/i, '');
+      // Company placeholder patterns specific to Ashby
+      cleaned = cleaned.replace(/^Company$/i, '');
+      cleaned = cleaned.replace(/^United\s+States$/i, '');
+      cleaned = cleaned.replace(/^This\s+week$/i, '');
+    }
   }
   
   // PHASE 3: AI-BASED UNIVERSAL PATTERN RECOGNITION

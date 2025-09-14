@@ -1893,18 +1893,121 @@ app.post('/api/proxy/search-jobs', authenticateToken, jobSearchRateLimit, async 
     // Minimal filtering - let frontend handle all processing
     console.log(`📊 [BACKEND DEBUG] Returning ${searchResults.length} raw results for frontend processing`);
     
-    // Only basic validation - frontend will do all the heavy processing
-    // For Tavily: results are raw API data with title/url at root level
-    // For SERP: results are processed job objects
+    // URL-based filtering for non-job results
     if (provider === 'tavily') {
-      // Tavily results are raw API data - minimal filtering
+      // Tavily results are raw API data - filter based on URL patterns
       searchResults = searchResults.filter(result => {
-        return result.title && result.url && result.title.length > 3;
+        if (!result.title || !result.url || result.title.length < 3) {
+          return false;
+        }
+        
+        // Filter out non-job URLs based on patterns
+        const url = result.url.toLowerCase();
+        const title = result.title.toLowerCase();
+        
+        // Skip GitHub/dataset repositories
+        if (url.includes('github.com') && (url.includes('/datasets') || url.includes('/dataset'))) {
+          console.log(`🚫 Filtered GitHub dataset: ${result.title}`);
+          return false;
+        }
+        
+        // Skip personal profiles and names
+        if (title.match(/^[a-z]+\s+[a-z]+$/)) {
+          console.log(`🚫 Filtered personal name: ${result.title}`);
+          return false;
+        }
+        
+        // Skip educational/learning content
+        if (title.includes('what can i learn') || title.includes('how to') || title.includes('what is')) {
+          console.log(`🚫 Filtered educational content: ${result.title}`);
+          return false;
+        }
+        
+        // Skip government/military policy documents
+        if (title.includes('army') && title.includes('policy')) {
+          console.log(`🚫 Filtered government policy: ${result.title}`);
+          return false;
+        }
+        
+        // Skip Google search help
+        if (title.includes('google search') && title.includes('correcting')) {
+          console.log(`🚫 Filtered Google search help: ${result.title}`);
+          return false;
+        }
+        
+        // Skip technical documentation
+        if (title.includes('abbreviation compendium') || title.includes('documentation') || title.includes('manual')) {
+          console.log(`🚫 Filtered technical docs: ${result.title}`);
+          return false;
+        }
+        
+        // Skip generic question patterns
+        if (title.endsWith('?')) {
+          console.log(`🚫 Filtered question: ${result.title}`);
+          return false;
+        }
+        
+        // Skip placeholder text
+        if (title === 'company' || title === 'united states' || title === 'this week') {
+          console.log(`🚫 Filtered placeholder: ${result.title}`);
+          return false;
+        }
+        
+        return true;
       });
     } else {
-      // SERP results are processed job objects
+      // SERP results are processed job objects - filter based on URL patterns
       searchResults = searchResults.filter(job => {
-        return job.title && job.url && job.title.length > 3;
+        if (!job.title || !job.url || job.title.length < 3) {
+          return false;
+        }
+        
+        // Apply similar URL-based filtering for SERP results
+        const url = job.url.toLowerCase();
+        const title = job.title.toLowerCase();
+        
+        // Skip non-job URLs
+        if (url.includes('github.com') && (url.includes('/datasets') || url.includes('/dataset'))) {
+          console.log(`🚫 Filtered GitHub dataset: ${job.title}`);
+          return false;
+        }
+        
+        if (title.match(/^[a-z]+\s+[a-z]+$/)) {
+          console.log(`🚫 Filtered personal name: ${job.title}`);
+          return false;
+        }
+        
+        if (title.includes('what can i learn') || title.includes('how to') || title.includes('what is')) {
+          console.log(`🚫 Filtered educational content: ${job.title}`);
+          return false;
+        }
+        
+        if (title.includes('army') && title.includes('policy')) {
+          console.log(`🚫 Filtered government policy: ${job.title}`);
+          return false;
+        }
+        
+        if (title.includes('google search') && title.includes('correcting')) {
+          console.log(`🚫 Filtered Google search help: ${job.title}`);
+          return false;
+        }
+        
+        if (title.includes('abbreviation compendium') || title.includes('documentation') || title.includes('manual')) {
+          console.log(`🚫 Filtered technical docs: ${job.title}`);
+          return false;
+        }
+        
+        if (title.endsWith('?')) {
+          console.log(`🚫 Filtered question: ${job.title}`);
+          return false;
+        }
+        
+        if (title === 'company' || title === 'united states' || title === 'this week') {
+          console.log(`🚫 Filtered placeholder: ${job.title}`);
+          return false;
+        }
+        
+        return true;
       });
     }
     

@@ -1611,8 +1611,10 @@ app.post('/api/proxy/search-jobs', authenticateToken, jobSearchRateLimit, async 
     const searchLocation = `"${location}"`;
     
     if (provider === 'tavily') {
-      // Tavily query format: "Job Title" "Job board" "Location" timefilter
-      jobBoardQuery = `${jobTitle} "${getJobBoardName(jobBoard.toLowerCase())}" ${searchLocation}`;
+      // Tavily uses exact same format as SERP
+      // Format: "Job Title" site:domain.com "Location" timefilter
+      const domain = getJobBoardDomain(jobBoard.toLowerCase());
+      jobBoardQuery = `${jobTitle} site:${domain} ${searchLocation}`;
     } else {
       // SERP API queries
       switch (jobBoard.toLowerCase()) {

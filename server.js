@@ -1620,10 +1620,8 @@ app.post('/api/proxy/search-jobs', authenticateToken, jobSearchRateLimit, async 
     const searchLocation = `"${location}"`;
     
     if (provider === 'tavily') {
-      // Tavily uses exact same format as SERP
-      // Format: "Job Title" site:domain.com "Location" timefilter
-      const domain = getJobBoardDomain(jobBoard.toLowerCase());
-      jobBoardQuery = `${jobTitle} site:${domain} ${searchLocation}`;
+      // Tavily uses new enhanced format for better job targeting
+      jobBoardQuery = buildTavilyQuery(query, location, jobBoard.toLowerCase());
     } else {
       // SERP API queries
       switch (jobBoard.toLowerCase()) {
@@ -1745,36 +1743,18 @@ app.post('/api/proxy/search-jobs', authenticateToken, jobSearchRateLimit, async 
 
     // Use the appropriate search engine
     if (provider === 'tavily') {
-      // Tavily search with proper time filtering
+      // Tavily search with enhanced targeting
+      const domain = getTavilyJobBoardDomain(jobBoard.toLowerCase());
       const tavilyParams = {
         api_key: apiKey,
         query: jobBoardQuery,
+        include_domains: [domain],
+        time_range: getTavilyTimeRange(timeFilter),
         search_depth: 'basic',
-        include_answer: false,
-        include_images: false,
-        include_raw_content: false,
         max_results: 100
       };
       
-      // Add days parameter for time filtering (Tavily's way, not Google's tbs syntax)
-      if (timeFilter && timeFilter !== 'anytime') {
-        const daysMapping = {
-          'day': 1,
-          'week': 7, 
-          'month': 30,
-          'year': 365,
-          'qdr:d': 1,
-          'qdr:w': 7,
-          'qdr:m': 30,
-          'qdr:y': 365
-        };
-        
-        const days = daysMapping[timeFilter];
-        if (days) {
-          tavilyParams.days = days;
-          console.log(`📅 Using Tavily days filter: ${days} days`);
-        }
-      }
+      console.log(`🔍 [TAVILY] Using enhanced targeting for domain: ${domain}`);
       
       console.log(`🔍 [TAVILY API DEBUG] Making API call with params:`, JSON.stringify(tavilyParams, null, 2));
       console.log(`🔍 [TAVILY API DEBUG] API Key (first 10 chars): ${apiKey.substring(0, 10)}...`);
@@ -2717,6 +2697,109 @@ function formatCompanyName(name) {
   name = name.replace(/\s+(Inc|Corp|LLC|Ltd|Co)$/i, '');
   
   return name.trim();
+}
+
+/**
+ * Build Tavily-specific search query with enhanced targeting
+ */
+function buildTavilyQuery(jobTitle, location, jobBoard) {
+  // Get the specific domain for the job board
+  const domain = getTavilyJobBoardDomain(jobBoard);
+  
+  // Build location variations for better matching
+  const locationVariations = buildLocationVariations(location);
+  
+  // Build the enhanced Tavily query
+  const query = `site:${domain} inurl:/jobs/ intitle:"${jobTitle}" ${locationVariations} -intern -contract -temp`;
+  
+  console.log(`🔍 [TAVILY] Built enhanced query: ${query}`);
+  return query;
+}
+
+/**
+ * Get Tavily-specific job board domains
+ */
+function getTavilyJobBoardDomain(boardId) {
+  const domains = {
+    'greenhouse': 'boards.greenhouse.io',
+    'lever': 'jobs.lever.co',
+    'ashby': 'jobs.ashbyhq.com',
+    'pinpoint': 'jobs.pinpointhq.com',
+    'paylocity': 'recruiting.paylocity.com',
+    'keka': 'jobs.keka.com',
+    'workable': 'jobs.workable.com',
+    'breezyhr': 'breezy.hr',
+    'wellfound': 'wellfound.com',
+    'y combinator work at a startup': 'workatastartup.com',
+    'ycombinator': 'workatastartup.com',
+    'oracle cloud': 'oraclecloud.com',
+    'oracle': 'oraclecloud.com',
+    'workday jobs': 'myworkdayjobs.com',
+    'workday': 'myworkdayjobs.com',
+    'recruitee': 'jobs.recruitee.com',
+    'rippling': 'jobs.rippling.com',
+    'gusto': 'jobs.gusto.com',
+    'smartrecruiters': 'jobs.smartrecruiters.com',
+    'jazzhr': 'applytojob.com',
+    'jobvite': 'jobs.jobvite.com',
+    'icims': 'jobs.icims.com',
+    'builtin': 'builtin.com',
+    'adp': 'workforcenow.adp.com',
+    'jobs subdomain': 'jobs.*',
+    'talent subdomain': 'talent.*'
+  };
+  return domains[boardId] || boardId;
+}
+
+/**
+ * Build location variations for better job matching
+ */
+function buildLocationVariations(location) {
+  const locationLower = location.toLowerCase();
+  
+  // Common location variations
+  if (locationLower.includes('united states') || locationLower.includes('usa') || locationLower.includes('us')) {
+    return '("United States" OR US OR USA OR "U.S." OR "Remote - US" OR "Remote, US" OR "US-Remote")';
+  } else if (locationLower.includes('canada')) {
+    return '("Canada" OR CA OR "Remote - Canada" OR "Remote, Canada" OR "Canada-Remote")';
+  } else if (locationLower.includes('united kingdom') || locationLower.includes('uk')) {
+    return '("United Kingdom" OR UK OR "Remote - UK" OR "Remote, UK" OR "UK-Remote")';
+  } else if (locationLower.includes('australia')) {
+    return '("Australia" OR AU OR "Remote - Australia" OR "Remote, Australia" OR "Australia-Remote")';
+  } else if (locationLower.includes('germany')) {
+    return '("Germany" OR DE OR "Remote - Germany" OR "Remote, Germany" OR "Germany-Remote")';
+  } else if (locationLower.includes('france')) {
+    return '("France" OR FR OR "Remote - France" OR "Remote, France" OR "France-Remote")';
+  } else if (locationLower.includes('netherlands')) {
+    return '("Netherlands" OR NL OR "Remote - Netherlands" OR "Remote, Netherlands" OR "Netherlands-Remote")';
+  } else if (locationLower.includes('remote')) {
+    return '("Remote" OR "Work from home" OR "WFH" OR "Distributed" OR "Virtual")';
+  } else {
+    // For specific cities or other locations, use the location as-is with some variations
+    return `("${location}" OR "Remote - ${location}" OR "Remote, ${location}" OR "${location}-Remote")`;
+  }
+}
+
+/**
+ * Get Tavily time range parameter
+ */
+function getTavilyTimeRange(timeFilter) {
+  if (!timeFilter || timeFilter === 'anytime') {
+    return null; // No time filter
+  }
+  
+  const timeMapping = {
+    'day': 'day',
+    'week': 'week', 
+    'month': 'month',
+    'year': 'year',
+    'qdr:d': 'day',
+    'qdr:w': 'week',
+    'qdr:m': 'month',
+    'qdr:y': 'year'
+  };
+  
+  return timeMapping[timeFilter] || null;
 }
 
 function getJobBoardDomain(boardId) {

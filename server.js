@@ -1528,7 +1528,7 @@ app.post('/api/admin/clear-api-keys', authenticateToken, apiRateLimit, async (re
       tavilyUsageLimit: 20
     };
     
-    await databases.updateDocument(DATABASE_ID, USER_COLLECTION_ID, userId, updateData);
+    await databases.updateDocument(DATABASE_ID, COLLECTION_ID, userId, updateData);
     
     console.log(`✅ [ADMIN] API keys cleared for user: ${userId}`);
     res.json({ 
@@ -1569,6 +1569,15 @@ app.post('/api/proxy/search-jobs', authenticateToken, jobSearchRateLimit, async 
     console.log(`🔑 [DEBUG] Getting API key for user ${req.user.userId}, provider: ${provider}`);
     const keyInfo = await getUserApiKey(req.user.userId, provider);
     console.log(`🔑 [DEBUG] API key result:`, keyInfo ? 'Found' : 'Not found');
+    if (keyInfo) {
+      console.log(`🔑 [DEBUG] Key details:`, {
+        hasKey: !!keyInfo.key,
+        isUserKey: keyInfo.isUserKey,
+        hasFreesLeft: keyInfo.hasFreesLeft,
+        usageCount: keyInfo.usageCount,
+        usageLimit: keyInfo.usageLimit
+      });
+    }
     
     if (!keyInfo) {
       return res.status(404).json({ error: `${provider.charAt(0).toUpperCase() + provider.slice(1)} API key not found` });
@@ -1767,12 +1776,19 @@ app.post('/api/proxy/search-jobs', authenticateToken, jobSearchRateLimit, async 
         }
       }
       
+      console.log(`🔍 [TAVILY API DEBUG] Making API call with params:`, JSON.stringify(tavilyParams, null, 2));
+      console.log(`🔍 [TAVILY API DEBUG] API Key (first 10 chars): ${apiKey.substring(0, 10)}...`);
+      
       const tavilyResponse = await axios.post('https://api.tavily.com/search', tavilyParams, {
         timeout: 30000,
         headers: {
           'Content-Type': 'application/json'
         }
       });
+      
+      console.log(`🔍 [TAVILY API DEBUG] Response status: ${tavilyResponse.status}`);
+      console.log(`🔍 [TAVILY API DEBUG] Response data keys:`, Object.keys(tavilyResponse.data));
+      console.log(`🔍 [TAVILY API DEBUG] Full response:`, JSON.stringify(tavilyResponse.data, null, 2));
 
       // Return raw Tavily data for frontend processing
       const tavilyResults = tavilyResponse.data.results || [];
@@ -1788,7 +1804,70 @@ app.post('/api/proxy/search-jobs', authenticateToken, jobSearchRateLimit, async 
       console.log(`📊 [TAVILY DEBUG] Query used: "${jobBoardQuery}"`);
       console.log(`📊 [TAVILY DEBUG] Time filter: ${timeFilter || 'none'}`);
       
-      searchResults = tavilyResults.map(result => ({
+      // Apply cleaning to Tavily results
+      const cleanedResults = tavilyResults.filter(result => {
+        if (!result.title || !result.url || result.title.length < 3) {
+          return false;
+        }
+        
+        // Apply URL-based filtering for non-job results
+        const url = result.url.toLowerCase();
+        const title = result.title.toLowerCase();
+        
+        // Skip GitHub/dataset repositories
+        if (url.includes('github.com') && (url.includes('/datasets') || url.includes('/dataset'))) {
+          console.log(`🚫 Filtered GitHub dataset: ${result.title}`);
+          return false;
+        }
+        
+        // Skip personal profiles and names
+        if (title.match(/^[a-z]+\s+[a-z]+$/)) {
+          console.log(`🚫 Filtered personal name: ${result.title}`);
+          return false;
+        }
+        
+        // Skip educational/learning content
+        if (title.includes('what can i learn') || title.includes('how to') || title.includes('what is')) {
+          console.log(`🚫 Filtered educational content: ${result.title}`);
+          return false;
+        }
+        
+        // Skip government/military policy documents
+        if (title.includes('army') && title.includes('policy')) {
+          console.log(`🚫 Filtered government policy: ${result.title}`);
+          return false;
+        }
+        
+        // Skip Google search help
+        if (title.includes('google search') && title.includes('correcting')) {
+          console.log(`🚫 Filtered Google search help: ${result.title}`);
+          return false;
+        }
+        
+        // Skip technical documentation
+        if (title.includes('abbreviation compendium') || title.includes('documentation') || title.includes('manual')) {
+          console.log(`🚫 Filtered technical docs: ${result.title}`);
+          return false;
+        }
+        
+        // Skip generic question patterns
+        if (title.endsWith('?')) {
+          console.log(`🚫 Filtered question: ${result.title}`);
+          return false;
+        }
+        
+        // Skip placeholder text
+        if (title === 'company' || title === 'united states' || title === 'this week') {
+          console.log(`🚫 Filtered placeholder: ${result.title}`);
+          return false;
+        }
+        
+        return true;
+      });
+      
+      console.log(`📊 [TAVILY DEBUG] After cleaning: ${cleanedResults.length} results (filtered out ${tavilyResults.length - cleanedResults.length})`);
+      
+      searchResults = cleanedResults.map(result => ({
         ...result, // Raw Tavily data
         _metadata: {
           jobBoard: jobBoard,
@@ -2474,6 +2553,100 @@ function cleanJobTitle(title, provider, jobBoard) {
       cleaned = cleaned.replace(/^Last\s+week$/i, '');
       cleaned = cleaned.replace(/^This\s+month$/i, '');
       cleaned = cleaned.replace(/^Last\s+month$/i, '');
+    }
+  } else if (jobBoardLower === 'workable') {
+    if (provider === 'tavily') {
+      // Tavily + Workable AI-based cleaning patterns
+      // Generic learning/educational content patterns
+      cleaned = cleaned.replace(/^What\s+can\s+I\s+learn\s*&\s*what\s+can\s+I\s+do\s+within\s+\d+\s+minutes\?$/i, '');
+      cleaned = cleaned.replace(/^How\s+to\s+[^?]+\?$/i, '');
+      cleaned = cleaned.replace(/^What\s+is\s+[^?]+\?$/i, '');
+      cleaned = cleaned.replace(/^How\s+do\s+I\s+[^?]+\?$/i, '');
+      cleaned = cleaned.replace(/^Can\s+I\s+[^?]+\?$/i, '');
+      cleaned = cleaned.replace(/^Should\s+I\s+[^?]+\?$/i, '');
+      cleaned = cleaned.replace(/^Why\s+[^?]+\?$/i, '');
+      cleaned = cleaned.replace(/^When\s+[^?]+\?$/i, '');
+      cleaned = cleaned.replace(/^Where\s+[^?]+\?$/i, '');
+      cleaned = cleaned.replace(/^Is\s+[^?]+\?$/i, '');
+      cleaned = cleaned.replace(/^Are\s+[^?]+\?$/i, '');
+      cleaned = cleaned.replace(/^Do\s+[^?]+\?$/i, '');
+      cleaned = cleaned.replace(/^Does\s+[^?]+\?$/i, '');
+      
+      // GitHub/dataset/technical repository patterns
+      cleaned = cleaned.replace(/^[a-zA-Z0-9\-_]+\/[a-zA-Z0-9\-_]+\s*·\s*Datasets?\s+at\s*\.{3,}$/i, '');
+      cleaned = cleaned.replace(/^[a-zA-Z0-9\-_]+\/[a-zA-Z0-9\-_]+\s*·\s*[^·]+\s*\.{3,}$/i, '');
+      cleaned = cleaned.replace(/^[a-zA-Z0-9\-_]+\/[a-zA-Z0-9\-_]+$/i, '');
+      cleaned = cleaned.replace(/^[a-zA-Z0-9\-_]+\/[a-zA-Z0-9\-_]+\s*·\s*[^·]+$/i, '');
+      cleaned = cleaned.replace(/^[a-zA-Z0-9\-_]+\/[a-zA-Z0-9\-_]+\s*·\s*[^·]+\s*at\s*\.{3,}$/i, '');
+      
+      // Personal names (first name + last name pattern)
+      cleaned = cleaned.replace(/^[A-Z][a-z]+\s+[A-Z][a-z]+$/i, '');
+      cleaned = cleaned.replace(/^[A-Z][a-z]+\s+[A-Z][a-z]+\s+[A-Z][a-z]+$/i, '');
+      cleaned = cleaned.replace(/^[A-Z][a-z]+\s+[A-Z][a-z]+\s+[A-Z][a-z]+\s+[A-Z][a-z]+$/i, '');
+      
+      // Government/military policy patterns
+      cleaned = cleaned.replace(/^Army\s+[A-Za-z\s]+Policy$/i, '');
+      cleaned = cleaned.replace(/^[A-Za-z\s]+Policy:?\s*Unclassified$/i, '');
+      cleaned = cleaned.replace(/^[A-Za-z\s]+Management\s+[A-Za-z\s]+Compendium$/i, '');
+      cleaned = cleaned.replace(/^[A-Za-z\s]+Policy$/i, '');
+      cleaned = cleaned.replace(/^[A-Za-z\s]+Regulation$/i, '');
+      cleaned = cleaned.replace(/^[A-Za-z\s]+Directive$/i, '');
+      cleaned = cleaned.replace(/^[A-Za-z\s]+Guideline$/i, '');
+      cleaned = cleaned.replace(/^[A-Za-z\s]+Procedure$/i, '');
+      cleaned = cleaned.replace(/^[A-Za-z\s]+Standard$/i, '');
+      
+      // Google search help patterns
+      cleaned = cleaned.replace(/^How\s+to\s+stop\s+default\s+Google\s+search\s+from\s+[^?]+\?$/i, '');
+      cleaned = cleaned.replace(/^Google\s+search\s+[^?]+\?$/i, '');
+      cleaned = cleaned.replace(/^Google\s+[^?]+\?$/i, '');
+      cleaned = cleaned.replace(/^Search\s+[^?]+\?$/i, '');
+      cleaned = cleaned.replace(/^Bing\s+[^?]+\?$/i, '');
+      cleaned = cleaned.replace(/^Yahoo\s+[^?]+\?$/i, '');
+      
+      // Generic question patterns
+      cleaned = cleaned.replace(/^[A-Z][^?]*\?$/i, '');
+      cleaned = cleaned.replace(/^[A-Z][a-z]*\s+[A-Z][^?]*\?$/i, '');
+      cleaned = cleaned.replace(/^[A-Z][a-z]*\s+[A-Z][a-z]*\s+[A-Z][^?]*\?$/i, '');
+      
+      // Technical documentation patterns
+      cleaned = cleaned.replace(/^[A-Za-z\s]+Abbreviation\s+Compendium$/i, '');
+      cleaned = cleaned.replace(/^[A-Za-z\s]+Documentation$/i, '');
+      cleaned = cleaned.replace(/^[A-Za-z\s]+Guide$/i, '');
+      cleaned = cleaned.replace(/^[A-Za-z\s]+Manual$/i, '');
+      cleaned = cleaned.replace(/^[A-Za-z\s]+Handbook$/i, '');
+      cleaned = cleaned.replace(/^[A-Za-z\s]+Reference$/i, '');
+      cleaned = cleaned.replace(/^[A-Za-z\s]+Glossary$/i, '');
+      cleaned = cleaned.replace(/^[A-Za-z\s]+Index$/i, '');
+      cleaned = cleaned.replace(/^[A-Za-z\s]+Catalog$/i, '');
+      
+      // Learning and tutorial patterns
+      cleaned = cleaned.replace(/^Learn\s+[A-Za-z\s]+$/i, '');
+      cleaned = cleaned.replace(/^Tutorial\s+[A-Za-z\s]+$/i, '');
+      cleaned = cleaned.replace(/^Course\s+[A-Za-z\s]+$/i, '');
+      cleaned = cleaned.replace(/^Training\s+[A-Za-z\s]+$/i, '');
+      cleaned = cleaned.replace(/^Workshop\s+[A-Za-z\s]+$/i, '');
+      cleaned = cleaned.replace(/^Seminar\s+[A-Za-z\s]+$/i, '');
+      cleaned = cleaned.replace(/^Webinar\s+[A-Za-z\s]+$/i, '');
+      
+      // Generic job search result pages
+      cleaned = cleaned.replace(/^[A-Za-z\s]+\s+Jobs\s+in\s+(the\s+)?United\s+States$/i, '');
+      cleaned = cleaned.replace(/^[A-Za-z\s]+\s+Jobs\s+in\s+United\s+States$/i, '');
+      cleaned = cleaned.replace(/^[A-Za-z\s]+\s+Jobs$/i, '');
+      cleaned = cleaned.replace(/^[A-Za-z\s]+\s+Employment$/i, '');
+      cleaned = cleaned.replace(/^[A-Za-z\s]+\s+Careers$/i, '');
+      cleaned = cleaned.replace(/^[A-Za-z\s]+\s+Opportunities$/i, '');
+      cleaned = cleaned.replace(/^[A-Za-z\s]+\s+Positions$/i, '');
+      cleaned = cleaned.replace(/^[A-Za-z\s]+\s+Openings$/i, '');
+      
+      // Company placeholder patterns specific to Workable
+      cleaned = cleaned.replace(/^Company$/i, '');
+      cleaned = cleaned.replace(/^United\s+States$/i, '');
+      cleaned = cleaned.replace(/^This\s+week$/i, '');
+      cleaned = cleaned.replace(/^Last\s+week$/i, '');
+      cleaned = cleaned.replace(/^This\s+month$/i, '');
+      cleaned = cleaned.replace(/^Last\s+month$/i, '');
+      cleaned = cleaned.replace(/^This\s+year$/i, '');
+      cleaned = cleaned.replace(/^Last\s+year$/i, '');
     }
   }
   

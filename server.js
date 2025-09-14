@@ -1610,7 +1610,12 @@ app.post('/api/proxy/search-jobs', authenticateToken, jobSearchRateLimit, async 
     const jobTitle = `"${query}"`;
     const searchLocation = `"${location}"`;
     
-    switch (jobBoard.toLowerCase()) {
+    if (provider === 'tavily') {
+      // Tavily query format: "Job Title" "Job board" "Location" timefilter
+      jobBoardQuery = `${jobTitle} "${getJobBoardName(jobBoard.toLowerCase())}" ${searchLocation}`;
+    } else {
+      // SERP API queries
+      switch (jobBoard.toLowerCase()) {
       case 'greenhouse':
         jobBoardQuery = `${jobTitle} site:greenhouse.io ${searchLocation}`;
         break;
@@ -1684,9 +1689,28 @@ app.post('/api/proxy/search-jobs', authenticateToken, jobSearchRateLimit, async 
         // Generic search for other job boards
         jobBoardQuery = `${jobTitle} ${searchLocation} jobs ${jobBoard}`;
         break;
+      }
     }
     
-    // Tavily doesn't use query-based time filters - we'll use the days parameter in the API call
+    // Add time filter to Tavily query if specified
+    if (provider === 'tavily' && timeFilter && timeFilter !== 'anytime') {
+      const timeFilterMapping = {
+        'day': 'tbs=qdr:d',
+        'week': 'tbs=qdr:w', 
+        'month': 'tbs=qdr:m',
+        'year': 'tbs=qdr:y',
+        'qdr:d': 'tbs=qdr:d',
+        'qdr:w': 'tbs=qdr:w',
+        'qdr:m': 'tbs=qdr:m',
+        'qdr:y': 'tbs=qdr:y'
+      };
+      
+      const timeFilterText = timeFilterMapping[timeFilter];
+      if (timeFilterText) {
+        jobBoardQuery += ` ${timeFilterText}`;
+      }
+    }
+    
     // SERP uses query-based time filters, so we add them to the query
     if (provider === 'serp' && timeFilter && timeFilter !== 'anytime') {
       const timeFilterMapping = {
@@ -1938,8 +1962,8 @@ function buildJobBoardQuery(query, location, jobBoard, provider) {
   const board = jobBoard.toLowerCase();
   
   if (provider === 'tavily') {
-    // Tavily doesn't need site restrictions, just good keywords
-    return `${query} jobs ${location} ${getJobBoardName(board)}`;
+    // Tavily query format: "Job Title" "Job board" "Location" timefilter
+    return `"${query}" "${getJobBoardName(board)}" "${location}"`;
   } else {
     // SERP API with specific site targeting
     const domain = getJobBoardDomain(board);
@@ -2051,6 +2075,24 @@ function cleanJobTitle(title, provider, jobBoard) {
       cleaned = cleaned.replace(/^Apply\s*-\s*My$/i, '');
       cleaned = cleaned.replace(/^N26 Jobs$/i, '');
       cleaned = cleaned.replace(/^AI Training for\s+.+\s+Writers?$/i, '');
+      // Generic job search result pages for Greenhouse via Tavily
+      cleaned = cleaned.replace(/^Software\s+Engineer\s+USA\s+Jobs,?\s+Employment$/i, '');
+      cleaned = cleaned.replace(/^Remote\s+Software\s+Engineer\s+Jobs\s+in\s+United\s+States\s+of\s+America$/i, '');
+      cleaned = cleaned.replace(/^Software\s+Engineer\s+Jobs\s+in\s+(the\s+)?United\s+States$/i, '');
+      cleaned = cleaned.replace(/^Software\s+engineer\s+salary\s+in\s+United\s+States$/i, '');
+      cleaned = cleaned.replace(/^Software\s+Engineer\s+Program$/i, '');
+      cleaned = cleaned.replace(/^Engineering\s+Jobs$/i, '');
+      // Generic patterns for any job title on Greenhouse via Tavily
+      cleaned = cleaned.replace(/^[A-Za-z\s]+\s+USA\s+Jobs,?\s+Employment$/i, '');
+      cleaned = cleaned.replace(/^Remote\s+[A-Za-z\s]+\s+Jobs\s+in\s+United\s+States\s+of\s+America$/i, '');
+      cleaned = cleaned.replace(/^[A-Za-z\s]+\s+Jobs\s+in\s+(the\s+)?United\s+States$/i, '');
+      cleaned = cleaned.replace(/^[A-Za-z\s]+\s+salary\s+in\s+United\s+States$/i, '');
+      cleaned = cleaned.replace(/^[A-Za-z\s]+\s+Program$/i, '');
+      cleaned = cleaned.replace(/^[A-Za-z\s]+\s+Jobs$/i, '');
+      // Company placeholder patterns specific to Greenhouse
+      cleaned = cleaned.replace(/^Company$/i, '');
+      cleaned = cleaned.replace(/^United\s+States$/i, '');
+      cleaned = cleaned.replace(/^This\s+week$/i, '');
     }
   } else if (jobBoardLower === 'indeed') {
     if (provider === 'serp') {

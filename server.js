@@ -1728,11 +1728,16 @@ app.post('/api/proxy/search-jobs', authenticateToken, jobSearchRateLimit, async 
     if (provider === 'tavily') {
       // Tavily search with enhanced targeting
       const domain = getTavilyJobBoardDomain(jobBoard.toLowerCase());
+      const timeRange = getTavilyTimeRange(timeFilter);
+      
+      console.log(`🔍 [TAVILY DEBUG] Input timeFilter: "${timeFilter}"`);
+      console.log(`🔍 [TAVILY DEBUG] Converted time_range: "${timeRange}"`);
+      
       const tavilyParams = {
         api_key: apiKey,
         query: jobBoardQuery,
         include_domains: [domain],
-        time_range: getTavilyTimeRange(timeFilter),
+        time_range: timeRange,
         search_depth: 'basic',
         max_results: 100
       };

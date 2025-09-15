@@ -1614,101 +1614,16 @@ app.post('/api/proxy/search-jobs', authenticateToken, jobSearchRateLimit, async 
 
     let searchResults = [];
 
-    // Use the query from frontend if it's already built, otherwise build it
+    // Use the query from frontend directly - no backend query building needed
     let jobBoardQuery;
     
     if (provider === 'tavily') {
       // Tavily uses new enhanced format for better job targeting
       jobBoardQuery = buildTavilyQuery(query, location, jobBoard.toLowerCase());
-    } else if (query.includes('site:')) {
-      // Frontend already built the query, use it directly
+    } else {
+      // For SERP, use the frontend query directly
       jobBoardQuery = query;
       console.log(`🔍 Using frontend-built query: "${jobBoardQuery}"`);
-    } else {
-      console.log(`🔍 Frontend query does not contain 'site:', falling back to backend query building`);
-      console.log(`🔍 Frontend query: "${query}"`);
-      console.log(`🔍 Location: "${location}"`);
-      console.log(`🔍 Job Board: "${jobBoard}"`);
-      // Fallback: build query on backend (for backward compatibility)
-      const jobTitle = `"${query}"`;
-      const searchLocation = `"${location}"`;
-      
-      // SERP API queries
-      switch (jobBoard.toLowerCase()) {
-      case 'greenhouse':
-        jobBoardQuery = `${jobTitle} site:greenhouse.io ${searchLocation}`;
-        break;
-      case 'lever':
-        jobBoardQuery = `${jobTitle} site:lever.co ${searchLocation}`;
-        break;
-      case 'ashby':
-        jobBoardQuery = `${jobTitle} site:ashbyhq.com ${searchLocation}`;
-        break;
-      case 'pinpoint':
-        jobBoardQuery = `${jobTitle} site:pinpointhq.com ${searchLocation}`;
-        break;
-      case 'paylocity':
-        jobBoardQuery = `${jobTitle} site:recruiting.paylocity.com ${searchLocation}`;
-        break;
-      case 'keka':
-        jobBoardQuery = `${jobTitle} site:keka.com ${searchLocation}`;
-        break;
-      case 'workable':
-        jobBoardQuery = `${jobTitle} site:jobs.workable.com ${searchLocation}`;
-        break;
-      case 'breezyhr':
-        jobBoardQuery = `${jobTitle} site:breezy.hr ${searchLocation}`;
-        break;
-      case 'wellfound':
-        jobBoardQuery = `${jobTitle} site:wellfound.com ${searchLocation}`;
-        break;
-      case 'y combinator work at a startup':
-        jobBoardQuery = `${jobTitle} site:workatastartup.com ${searchLocation}`;
-        break;
-      case 'oracle cloud':
-        jobBoardQuery = `${jobTitle} site:oraclecloud.com ${searchLocation}`;
-        break;
-      case 'workday jobs':
-        jobBoardQuery = `${jobTitle} site:myworkdayjobs.com ${searchLocation}`;
-        break;
-      case 'recruitee':
-        jobBoardQuery = `${jobTitle} site:recruitee.com ${searchLocation}`;
-        break;
-      case 'rippling':
-        jobBoardQuery = `${jobTitle} (site:rippling.com OR site:rippling-ats.com) ${searchLocation}`;
-        break;
-      case 'gusto':
-        jobBoardQuery = `${jobTitle} site:jobs.gusto.com ${searchLocation}`;
-        break;
-      case 'smartrecruiters':
-        jobBoardQuery = `${jobTitle} site:jobs.smartrecruiters.com ${searchLocation}`;
-        break;
-      case 'jazzhr':
-        jobBoardQuery = `${jobTitle} site:applytojob.com ${searchLocation}`;
-        break;
-      case 'jobvite':
-        jobBoardQuery = `${jobTitle} site:jobvite.com ${searchLocation}`;
-        break;
-      case 'icims':
-        jobBoardQuery = `${jobTitle} site:icims.com ${searchLocation}`;
-        break;
-      case 'builtin':
-        jobBoardQuery = `${jobTitle} site:builtin.com/job/ ${searchLocation}`;
-        break;
-      case 'adp':
-        jobBoardQuery = `${jobTitle} (site:workforcenow.adp.com OR site:myjobs.adp.com) ${searchLocation}`;
-        break;
-      case 'jobs subdomain':
-        jobBoardQuery = `${jobTitle} site:jobs.* ${searchLocation}`;
-        break;
-      case 'talent subdomain':
-        jobBoardQuery = `${jobTitle} site:talent.* ${searchLocation}`;
-        break;
-      default:
-        // Generic search for other job boards
-        jobBoardQuery = `${jobTitle} ${searchLocation} jobs ${jobBoard}`;
-        break;
-      }
     }
     
     // Tavily time filtering is handled via time_range parameter, not query string

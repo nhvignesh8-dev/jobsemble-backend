@@ -1625,6 +1625,10 @@ app.post('/api/proxy/search-jobs', authenticateToken, jobSearchRateLimit, async 
       jobBoardQuery = query;
       console.log(`🔍 Using frontend-built query: "${jobBoardQuery}"`);
     } else {
+      console.log(`🔍 Frontend query does not contain 'site:', falling back to backend query building`);
+      console.log(`🔍 Frontend query: "${query}"`);
+      console.log(`🔍 Location: "${location}"`);
+      console.log(`🔍 Job Board: "${jobBoard}"`);
       // Fallback: build query on backend (for backward compatibility)
       const jobTitle = `"${query}"`;
       const searchLocation = `"${location}"`;

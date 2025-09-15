@@ -1614,15 +1614,21 @@ app.post('/api/proxy/search-jobs', authenticateToken, jobSearchRateLimit, async 
 
     let searchResults = [];
 
-    // Build job board specific search query based on the specified patterns
+    // Use the query from frontend if it's already built, otherwise build it
     let jobBoardQuery;
-    const jobTitle = `"${query}"`;
-    const searchLocation = `"${location}"`;
     
     if (provider === 'tavily') {
       // Tavily uses new enhanced format for better job targeting
       jobBoardQuery = buildTavilyQuery(query, location, jobBoard.toLowerCase());
+    } else if (query.includes('site:')) {
+      // Frontend already built the query, use it directly
+      jobBoardQuery = query;
+      console.log(`🔍 Using frontend-built query: "${jobBoardQuery}"`);
     } else {
+      // Fallback: build query on backend (for backward compatibility)
+      const jobTitle = `"${query}"`;
+      const searchLocation = `"${location}"`;
+      
       // SERP API queries
       switch (jobBoard.toLowerCase()) {
       case 'greenhouse':

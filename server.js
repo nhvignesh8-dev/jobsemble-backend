@@ -2709,8 +2709,8 @@ function buildTavilyQuery(jobTitle, location, jobBoard) {
   // Build location variations for better matching
   const locationVariations = buildLocationVariations(location);
   
-  // Build the enhanced Tavily query
-  const query = `site:${domain} inurl:/jobs/ intitle:"${jobTitle}" ${locationVariations} -intern -contract -temp`;
+  // Build the enhanced Tavily query (without exclusions)
+  const query = `site:${domain} inurl:/jobs/ intitle:"${jobTitle}" ${locationVariations}`;
   
   console.log(`🔍 [TAVILY] Built enhanced query: ${query}`);
   return query;

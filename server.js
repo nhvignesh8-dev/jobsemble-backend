@@ -816,7 +816,10 @@ app.post('/api/proxy/serp/search', authenticateToken, apiRateLimit, async (req, 
       api_key: apiKey,
       engine,
       q: query,
-      num: num.toString()
+      num: num.toString(),
+      filter: '0',
+      uule: 'w+CAIQICIUQ2FsaWZvcm5pYSwgVW5pdGVkIFN0YXRlcw', // Location hint for better results
+      safe: 'off' // Disable safe search for more results
     });
 
     if (timeFilter && timeFilter !== 'anytime') {
@@ -840,7 +843,8 @@ app.post('/api/proxy/serp/search', authenticateToken, apiRateLimit, async (req, 
     const response = await axios.get(`https://serpapi.com/search?${params.toString()}`, {
       timeout: 30000,
       headers: {
-        'Accept': 'application/json'
+        'Accept': 'application/json',
+        'User-Agent': 'Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)'
       }
     });
 
@@ -1391,7 +1395,9 @@ app.post('/api/proxy/serp-search-simple', authenticateToken, apiRateLimit, async
       q: query,
       num: '100',
       start: '0',
-      filter: '0'
+      filter: '0',
+      uule: 'w+CAIQICIUQ2FsaWZvcm5pYSwgVW5pdGVkIFN0YXRlcw', // Location hint for better results
+      safe: 'off' // Disable safe search for more results
     });
 
     // Add time filter if specified
@@ -1417,7 +1423,10 @@ app.post('/api/proxy/serp-search-simple', authenticateToken, apiRateLimit, async
     console.log(`🔗 [SERP SIMPLE] Making API call: ${serpUrl}`);
     
     const serpResponse = await axios.get(serpUrl, {
-      timeout: 30000
+      timeout: 30000,
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)'
+      }
     });
     
     // Process and return results
@@ -1470,8 +1479,11 @@ app.post('/api/proxy/serp-raw', authenticateToken, apiRateLimit, async (req, res
       api_key: apiKey,
       engine: 'google',
       q: query,
-      num: num || '10',
-      start: start || '0'
+      num: num || '100',
+      start: start || '0',
+      filter: '0',
+      uule: 'w+CAIQICIUQ2FsaWZvcm5pYSwgVW5pdGVkIFN0YXRlcw', // Location hint for better results
+      safe: 'off' // Disable safe search for more results
     });
     
     if (tbs) {
@@ -1481,7 +1493,10 @@ app.post('/api/proxy/serp-raw', authenticateToken, apiRateLimit, async (req, res
     console.log(`🔗 [BACKEND API] Making SERP API call: ${query}`);
     
     const serpResponse = await axios.get(`https://serpapi.com/search?${params}`, {
-      timeout: 30000
+      timeout: 30000,
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)'
+      }
     });
     
     // Return raw data for frontend processing
@@ -1784,7 +1799,9 @@ app.post('/api/proxy/search-jobs', authenticateToken, jobSearchRateLimit, async 
         q: jobBoardQuery,
         num: '100', // Request 100 results in a single call (max allowed)
         start: '0',
-        filter: '0' // Include near-duplicates to get more results
+        filter: '0', // Include near-duplicates to get more results
+        uule: 'w+CAIQICIUQ2FsaWZvcm5pYSwgVW5pdGVkIFN0YXRlcw', // Location hint for better results
+        safe: 'off' // Disable safe search for more results
       });
 
       if (timeFilter && timeFilter !== 'anytime') {
@@ -1808,7 +1825,10 @@ app.post('/api/proxy/search-jobs', authenticateToken, jobSearchRateLimit, async 
       
       try {
       const serpResponse = await axios.get(`https://serpapi.com/search?${params}`, {
-          timeout: 60000 // Increased timeout for larger response
+          timeout: 60000, // Increased timeout for larger response
+          headers: {
+            'User-Agent': 'Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)'
+          }
       });
 
       const organicResults = serpResponse.data.organic_results || [];

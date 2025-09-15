@@ -1759,7 +1759,7 @@ app.post('/api/proxy/search-jobs', authenticateToken, jobSearchRateLimit, async 
       console.log(`🔍 [TAVILY API DEBUG] Full response:`, JSON.stringify(tavilyResponse.data, null, 2));
 
       // Return raw Tavily data for frontend processing
-      const tavilyResults = tavilyResponse.data.results || [];
+      const tavilyResults = tavilyResponse.data.results || tavilyResponse.data.rawData?.results || [];
       
       // Debug: Log first result to see available fields
       if (tavilyResults.length > 0) {
@@ -1972,12 +1972,12 @@ app.post('/api/proxy/search-tavily-direct', authenticateToken, jobSearchRateLimi
     });
 
     console.log(`🔍 [DIRECT TAVILY] Tavily API response status: ${tavilyResponse.status}`);
-    console.log(`🔍 [DIRECT TAVILY] Results count: ${tavilyResponse.data.results?.length || 0}`);
+    console.log(`🔍 [DIRECT TAVILY] Results count: ${tavilyResponse.data.results?.length || tavilyResponse.data.rawData?.results?.length || 0}`);
 
     // Return results directly without any processing
     res.json({
       success: true,
-      results: tavilyResponse.data.results || [],
+      results: tavilyResponse.data.results || tavilyResponse.data.rawData?.results || [],
       response_time: tavilyResponse.data.response_time,
       request_id: tavilyResponse.data.request_id
     });

@@ -1923,6 +1923,80 @@ app.post('/api/proxy/search-jobs', authenticateToken, jobSearchRateLimit, async 
   }
 });
 
+// Direct Tavily Search Endpoint - Frontend sends complete query
+app.post('/api/proxy/search-tavily-direct', authenticateToken, jobSearchRateLimit, async (req, res) => {
+  try {
+    const { query, include_domains, time_range, search_depth = 'basic', max_results = 100 } = req.body;
+    
+    console.log(`🔍 [DIRECT TAVILY] Request received:`, {
+      query: query?.substring(0, 100) + '...',
+      include_domains,
+      time_range,
+      search_depth,
+      max_results
+    });
+    
+    if (!query) {
+      return res.status(400).json({ error: 'Search query required' });
+    }
+
+    // Get user's Tavily API key
+    const userKey = await getUserApiKey(req.user.userId, 'tavily');
+    if (!userKey) {
+      return res.status(404).json({ error: 'Tavily API key not found' });
+    }
+
+    // Retrieve API key (plain text)
+    const apiKey = retrieveApiKey(userKey.key);
+    if (!apiKey) {
+      return res.status(404).json({ error: 'API key not found. Please contact support.' });
+    }
+
+    // Build Tavily API parameters exactly as frontend provided
+    const tavilyParams = {
+      api_key: apiKey,
+      query: query,
+      include_domains: include_domains || [],
+      time_range: time_range,
+      search_depth: search_depth,
+      max_results: max_results
+    };
+    
+    console.log(`🔍 [DIRECT TAVILY] Making API call with params:`, JSON.stringify(tavilyParams, null, 2));
+    
+    const tavilyResponse = await axios.post('https://api.tavily.com/search', tavilyParams, {
+      timeout: 30000,
+      headers: {
+        'Content-Type': 'application/json'
+      }
+    });
+
+    console.log(`🔍 [DIRECT TAVILY] Tavily API response status: ${tavilyResponse.status}`);
+    console.log(`🔍 [DIRECT TAVILY] Results count: ${tavilyResponse.data.results?.length || 0}`);
+
+    // Return results directly without any processing
+    res.json({
+      success: true,
+      results: tavilyResponse.data.results || [],
+      response_time: tavilyResponse.data.response_time,
+      request_id: tavilyResponse.data.request_id
+    });
+
+  } catch (error) {
+    console.error('Direct Tavily search error:', error.message);
+    
+    if (error.response?.status === 401) {
+      res.status(401).json({ error: 'Invalid API key' });
+    } else if (error.response?.status === 429) {
+      res.status(429).json({ error: 'API rate limit exceeded' });
+    } else if (error.response?.status === 402) {
+      res.status(402).json({ error: 'API credits exhausted' });
+    } else {
+      res.status(500).json({ error: 'Search request failed' });
+    }
+  }
+});
+
 // Helper functions for job processing
 // Old buildJobBoardQuery function removed - using new buildTavilyQuery function instead
 

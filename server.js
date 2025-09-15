@@ -1422,10 +1422,10 @@ app.get('/api/usage/:provider', authenticateToken, async (req, res) => {
   }
 });
 
-// Simplified SERP Search with Pagination - gets up to 100 results via multiple API calls
+// Simplified SERP Search with Optional Pagination - gets 10 or 50 results based on user preference
 app.post('/api/proxy/serp-search-simple', authenticateToken, apiRateLimit, async (req, res) => {
   try {
-    const { query, timeFilter } = req.body;
+    const { query, timeFilter, enablePagination = false } = req.body;
     
     if (!query) {
       return res.status(400).json({ error: 'Query required' });
@@ -1442,11 +1442,11 @@ app.post('/api/proxy/serp-search-simple', authenticateToken, apiRateLimit, async
       return res.status(400).json({ error: 'SERP API key retrieval failed' });
     }
 
-    console.log(`🔗 [SERP PAGINATED] Starting paginated search for: "${query}"`);
+    console.log(`🔗 [SERP PAGINATED] Starting ${enablePagination ? 'paginated' : 'single-page'} search for: "${query}"`);
 
-    // Make multiple API calls to get up to 100 results (10 pages × 10 results each)
+    // Make API calls based on pagination preference
     const allResults = [];
-    const maxPages = 10; // 10 pages × 10 results = 100 total
+    const maxPages = enablePagination ? 5 : 1; // 5 pages × 10 results = 50 total, or 1 page = 10 results
     
     for (let page = 0; page < maxPages; page++) {
       const start = page * 10; // Each page has 10 results
@@ -1535,7 +1535,7 @@ app.post('/api/proxy/serp-search-simple', authenticateToken, apiRateLimit, async
       score: index + 1 // Position in combined results
     }));
 
-    console.log(`✅ [SERP PAGINATED] Returning ${processedResults.length} total processed results from ${Math.ceil(allResults.length / 10)} pages`);
+    console.log(`✅ [SERP PAGINATED] Returning ${processedResults.length} total processed results from ${Math.ceil(allResults.length / 10)} pages (${enablePagination ? 'pagination enabled' : 'single page'})`);
     res.json(processedResults);
     
   } catch (error) {

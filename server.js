@@ -1626,26 +1626,7 @@ app.post('/api/proxy/search-jobs', authenticateToken, jobSearchRateLimit, async 
       console.log(`🔍 Using frontend-built query: "${jobBoardQuery}"`);
     }
     
-    // Tavily time filtering is handled via time_range parameter, not query string
-    
-    // SERP uses query-based time filters, so we add them to the query
-    if (provider === 'serp' && timeFilter && timeFilter !== 'anytime') {
-      const timeFilterMapping = {
-        'day': 'tbs=qdr:d',
-        'week': 'tbs=qdr:w', 
-        'month': 'tbs=qdr:m',
-        'year': 'tbs=qdr:y',
-        'qdr:d': 'tbs=qdr:d',
-        'qdr:w': 'tbs=qdr:w',
-        'qdr:m': 'tbs=qdr:m',
-        'qdr:y': 'tbs=qdr:y'
-      };
-      
-      const timeFilterText = timeFilterMapping[timeFilter];
-      if (timeFilterText) {
-        jobBoardQuery += ` ${timeFilterText}`;
-      }
-    }
+    // Frontend builds complete queries with time filters, backend uses them directly
     
     console.log(`🔍 Built search query: "${jobBoardQuery}"`);
 

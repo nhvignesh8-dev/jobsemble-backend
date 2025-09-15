@@ -154,9 +154,9 @@ export class GoogleSheetsAppService {
         job.company,
         job.location,
         job.url,
+        job.applicationStatus || 'Not Applied', // Application Status column
         job.datePosted,
-        job.description.substring(0, 1000), // Limit description length
-        new Date().toISOString() // Export timestamp
+        'Job Scout' // Source column
       ]);
 
       // Append the job data to the sheet
@@ -236,16 +236,19 @@ export class GoogleSheetsAppService {
         'Job Title',
         'Company', 
         'Location',
-        'URL',
+        'Job URL',
+        'Application Status',
         'Date Posted',
-        'Description',
-        'Exported At'
+        'Source'
       ];
 
-      // If no headers or incomplete headers, write them
-      if (existingHeaders.length === 0 || existingHeaders[0] !== expectedHeaders[0]) {
-        console.log('📝 Adding headers to sheet...');
-        
+      // Check if headers are missing or incomplete
+      const needsHeaders = existingHeaders.length === 0 || 
+                          existingHeaders.length < expectedHeaders.length ||
+                          !this.headersMatch(existingHeaders, expectedHeaders);
+
+      if (needsHeaders) {
+        console.log('📋 Adding headers to sheet (missing or incomplete)');
         await fetch(
           `https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values/Sheet1!A1:G1?valueInputOption=RAW`,
           {
@@ -259,13 +262,31 @@ export class GoogleSheetsAppService {
             })
           }
         );
-
         console.log('✅ Headers added successfully');
+      } else {
+        console.log('✅ Headers already exist, skipping header addition');
       }
     } catch (error) {
       console.warn('⚠️ Could not ensure headers (continuing anyway):', error);
       // Continue even if header setup fails
     }
+  }
+
+  /**
+   * Check if existing headers match expected headers
+   */
+  private static headersMatch(existingHeaders: string[], expectedHeaders: string[]): boolean {
+    if (existingHeaders.length !== expectedHeaders.length) {
+      return false;
+    }
+    
+    for (let i = 0; i < expectedHeaders.length; i++) {
+      if (existingHeaders[i] !== expectedHeaders[i]) {
+        return false;
+      }
+    }
+    
+    return true;
   }
 
   /**

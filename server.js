@@ -3428,6 +3428,9 @@ app.post('/api/replace-sheet-data', authenticateToken, async (req, res) => {
       return res.status(400).json({ error: 'Invalid Google Sheets URL' });
     }
     const sheetId = sheetIdMatch[1];
+    
+    console.log(`🔍 [REPLACE] Processing sheet URL:`, sheetUrl);
+    console.log(`🔍 [REPLACE] Extracted sheet ID:`, sheetId);
 
     // Get Google access token using the same method as filters (system service account)
     console.log(`🔗 [REPLACE] Getting Google access token for user: ${req.user.userId}`);
@@ -3440,9 +3443,33 @@ app.post('/api/replace-sheet-data', authenticateToken, async (req, res) => {
     
     console.log(`✅ [REPLACE] Google access token obtained successfully`);
 
+    // Remove duplicates before replacement (same logic as frontend)
+    const urlToJob = new Map();
+    const uniqueJobs = [];
+    
+    jobs.forEach((job, index) => {
+      const url = job.url || job.URL || '';
+      if (!url.trim()) {
+        uniqueJobs.push(job);
+        return;
+      }
+      
+      const normalizedUrl = url.trim().toLowerCase();
+      
+      if (!urlToJob.has(normalizedUrl)) {
+        // First occurrence
+        urlToJob.set(normalizedUrl, index);
+        uniqueJobs.push(job);
+      }
+      // Skip duplicates
+    });
+
+    console.log(`🔄 [REPLACE] Removed ${jobs.length - uniqueJobs.length} duplicates, keeping ${uniqueJobs.length} unique jobs`);
+    console.log(`🔄 [REPLACE] Sample unique job URLs:`, uniqueJobs.slice(0, 3).map(job => job.url || job.URL));
+
     // Prepare data for replacement
     const headers = ['Job Title', 'Company', 'Location', 'Job URL', 'Application Status', 'Date Posted', 'Source'];
-    const jobRows = jobs.map(job => [
+    const jobRows = uniqueJobs.map(job => [
       job.title || '',
       job.company || '',
       job.location || '',
@@ -3452,6 +3479,9 @@ app.post('/api/replace-sheet-data', authenticateToken, async (req, res) => {
       job.source || ''
     ]);
     const dataToReplace = [headers, ...jobRows];
+    
+    console.log(`🔄 [REPLACE] Data to replace: ${dataToReplace.length} rows (1 header + ${jobRows.length} jobs)`);
+    console.log(`🔄 [REPLACE] First few job URLs in replacement data:`, jobRows.slice(0, 3).map(row => row[3])); // URL is column 3
 
     // First, check if we can access the sheet
     console.log(`🔍 [REPLACE] Checking sheet access for: ${sheetId}`);
@@ -3474,17 +3504,46 @@ app.post('/api/replace-sheet-data', authenticateToken, async (req, res) => {
     }
 
     // Replace all data in the sheet
-    const range = 'A1:Z1000'; // Large range to clear existing data
+    // Compute the exact write range for new data (headers + rows)
+    const totalRowsToWrite = dataToReplace.length; // includes header row
+    const writeRange = `Sheet1!A1:G${totalRowsToWrite}`;
     console.log(`🔗 [REPLACE] Replacing sheet data:`, {
       sheetId: sheetId,
-      range: range,
+      clearRange: 'Sheet1!A:Z',
+      writeRange: writeRange,
       dataRows: dataToReplace.length,
-      jobsCount: jobs.length
+      jobsCount: jobs.length,
+      uniqueJobsCount: uniqueJobs.length
     });
-    
+
+    // First, clear the entire sheet columns A:Z to remove any old rows below
+    console.log(`🧹 [REPLACE] Clearing entire sheet range Sheet1!A:Z...`);
+    try {
+      const clearResponse = await fetch(
+        `https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values/Sheet1!A:Z:clear`,
+        {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${accessToken}`,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({})
+        }
+      );
+
+      if (!clearResponse.ok) {
+        const text = await clearResponse.text();
+        console.warn('⚠️ [REPLACE] Could not clear sheet:', text);
+      } else {
+        console.log('✅ [REPLACE] Sheet cleared successfully');
+      }
+    } catch (clearError) {
+      console.warn('⚠️ [REPLACE] Clear operation failed, continuing with replacement:', clearError.message);
+    }
+
     try {
       const response = await fetch(
-        `https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values/${range}?valueInputOption=RAW`,
+        `https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values/${writeRange}?valueInputOption=RAW`,
         {
           method: 'PUT',
           headers: {
@@ -3553,9 +3612,32 @@ app.post('/api/export-to-sheets', authenticateToken, async (req, res) => {
     
     console.log(`✅ [EXPORT] Google access token obtained successfully`);
 
+    // Remove duplicates before export (same logic as frontend)
+    const urlToJob = new Map();
+    const uniqueJobs = [];
+    
+    jobs.forEach((job, index) => {
+      const url = job.url || job.URL || '';
+      if (!url.trim()) {
+        uniqueJobs.push(job);
+        return;
+      }
+      
+      const normalizedUrl = url.trim().toLowerCase();
+      
+      if (!urlToJob.has(normalizedUrl)) {
+        // First occurrence
+        urlToJob.set(normalizedUrl, index);
+        uniqueJobs.push(job);
+      }
+      // Skip duplicates
+    });
+
+    console.log(`🔄 [EXPORT] Removed ${jobs.length - uniqueJobs.length} duplicates, keeping ${uniqueJobs.length} unique jobs`);
+
     // Prepare data for export
     const headers = ['Job Title', 'Company', 'Location', 'Job URL', 'Application Status', 'Date Posted', 'Source'];
-    const jobRows = jobs.map(job => [
+    const jobRows = uniqueJobs.map(job => [
       job.title || '',
       job.company || '',
       job.location || '',

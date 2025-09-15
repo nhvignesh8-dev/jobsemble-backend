@@ -1711,10 +1711,12 @@ app.post('/api/proxy/search-jobs', authenticateToken, jobSearchRateLimit, async 
 
       if (timeFilter && timeFilter !== 'anytime') {
         const timeFilters = {
+          'hour': 'qdr:h',
           'day': 'qdr:d',
           'week': 'qdr:w', 
           'month': 'qdr:m',
           'year': 'qdr:y',
+          'qdr:h': 'qdr:h',
           'qdr:d': 'qdr:d',
           'qdr:w': 'qdr:w',
           'qdr:m': 'qdr:m',

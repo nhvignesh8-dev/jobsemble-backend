@@ -1618,7 +1618,7 @@ app.post('/api/proxy/search-jobs', authenticateToken, jobSearchRateLimit, async 
     let jobBoardQuery;
     
     if (provider === 'tavily') {
-      // Tavily uses new enhanced format for better job targeting
+      // Tavily uses its own query building logic - don't touch
       jobBoardQuery = buildTavilyQuery(query, location, jobBoard.toLowerCase());
     } else {
       // For SERP, use the frontend query directly

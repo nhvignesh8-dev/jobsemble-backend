@@ -1364,6 +1364,84 @@ app.get('/api/usage/:provider', authenticateToken, async (req, res) => {
   }
 });
 
+// Simplified SERP Search - frontend sends query and timeFilter, backend builds URL
+app.post('/api/proxy/serp-search-simple', authenticateToken, apiRateLimit, async (req, res) => {
+  try {
+    const { query, timeFilter } = req.body;
+    
+    if (!query) {
+      return res.status(400).json({ error: 'Query required' });
+    }
+
+    // Get user's SERP API key
+    const apiKeyInfo = await getUserApiKey(req.user.userId, 'serp');
+    if (!apiKeyInfo || !apiKeyInfo.key) {
+      return res.status(400).json({ error: 'SERP API key not found' });
+    }
+    
+    const apiKey = retrieveApiKey(apiKeyInfo.key);
+    if (!apiKey) {
+      return res.status(400).json({ error: 'SERP API key retrieval failed' });
+    }
+
+    // Build SERP API URL with all parameters
+    const params = new URLSearchParams({
+      api_key: apiKey,
+      engine: 'google',
+      q: query,
+      num: '100',
+      start: '0',
+      filter: '0'
+    });
+
+    // Add time filter if specified
+    if (timeFilter && timeFilter !== 'anytime') {
+      const timeFilterMapping = {
+        'hour': 'qdr:h',
+        'day': 'qdr:d',
+        'week': 'qdr:w', 
+        'month': 'qdr:m',
+        'year': 'qdr:y',
+        'qdr:h': 'qdr:h',
+        'qdr:d': 'qdr:d',
+        'qdr:w': 'qdr:w',
+        'qdr:m': 'qdr:m',
+        'qdr:y': 'qdr:y'
+      };
+      
+      const tbsValue = timeFilterMapping[timeFilter] || timeFilter;
+      params.append('tbs', tbsValue);
+    }
+
+    const serpUrl = `https://serpapi.com/search?${params.toString()}`;
+    console.log(`🔗 [SERP SIMPLE] Making API call: ${serpUrl}`);
+    
+    const serpResponse = await axios.get(serpUrl, {
+      timeout: 30000
+    });
+    
+    // Process and return results
+    const organicResults = serpResponse.data.organic_results || [];
+    const processedResults = organicResults.map(result => ({
+      title: result.title || '',
+      company: result.source || 'Unknown',
+      location: result.location || '',
+      url: result.link || '',
+      datePosted: result.date || '',
+      description: result.snippet || '',
+      source: 'SERP',
+      score: result.position || 0
+    }));
+
+    console.log(`✅ [SERP SIMPLE] Returning ${processedResults.length} processed results`);
+    res.json(processedResults);
+    
+  } catch (error) {
+    console.error('SERP simple search error:', error.message);
+    res.status(500).json({ error: 'SERP search failed' });
+  }
+});
+
 // Backend API Call Handler for SERP - returns raw data to frontend
 app.post('/api/proxy/serp-raw', authenticateToken, apiRateLimit, async (req, res) => {
   try {

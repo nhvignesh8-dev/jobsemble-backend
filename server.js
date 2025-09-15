@@ -1919,18 +1919,7 @@ app.post('/api/proxy/search-jobs', authenticateToken, jobSearchRateLimit, async 
 });
 
 // Helper functions for job processing
-function buildJobBoardQuery(query, location, jobBoard, provider) {
-  const board = jobBoard.toLowerCase();
-  
-  if (provider === 'tavily') {
-    // Tavily query format: "Job Title" "Job board" "Location" timefilter
-    return `"${query}" "${getJobBoardName(board)}" "${location}"`;
-  } else {
-    // SERP API with specific site targeting
-    const domain = getJobBoardDomain(board);
-    return `"${query}" jobs "${location}" site:${domain}`;
-  }
-}
+// Old buildJobBoardQuery function removed - using new buildTavilyQuery function instead
 
 function getJobBoardName(boardId) {
   const names = {

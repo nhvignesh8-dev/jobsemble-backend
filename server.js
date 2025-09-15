@@ -793,7 +793,7 @@ app.post('/api/proxy/tavily/search', authenticateToken, apiRateLimit, async (req
   }
 });
 
-// SERP API Search Proxy
+// SERP API Search Proxy with Pagination
 app.post('/api/proxy/serp/search', authenticateToken, apiRateLimit, async (req, res) => {
   try {
     const { query, engine = 'google', num = 100, timeFilter } = req.body;
@@ -811,42 +811,96 @@ app.post('/api/proxy/serp/search', authenticateToken, apiRateLimit, async (req, 
     // Retrieve API key (plain text)
     const apiKey = retrieveApiKey(userKey);
 
-    // Build request parameters
-    const params = new URLSearchParams({
-      api_key: apiKey,
-      engine,
-      q: query,
-      num: num.toString(),
-      filter: '0',
-      uule: 'w+CAIQICIUQ2FsaWZvcm5pYSwgVW5pdGVkIFN0YXRlcw', // Location hint for better results
-      safe: 'off' // Disable safe search for more results
-    });
+    console.log(`🔗 [SERP PAGINATED] Starting paginated search for: "${query}" (${num} results requested)`);
 
-    if (timeFilter && timeFilter !== 'anytime') {
-      const timeFilters = {
-        'day': 'qdr:d',
-        'week': 'qdr:w', 
-        'month': 'qdr:m',
-        'year': 'qdr:y',
-        'qdr:d': 'qdr:d',
-        'qdr:w': 'qdr:w',
-        'qdr:m': 'qdr:m',
-        'qdr:y': 'qdr:y'
-      };
+    // Make multiple API calls to get up to the requested number of results
+    const allResults = [];
+    const maxPages = Math.ceil(num / 10); // Calculate pages needed (10 results per page)
+    
+    for (let page = 0; page < maxPages; page++) {
+      const start = page * 10; // Each page has 10 results
       
-      if (timeFilters[timeFilter]) {
-        params.append('tbs', timeFilters[timeFilter]);
+      // Build request parameters for this page
+      const params = new URLSearchParams({
+        api_key: apiKey,
+        engine,
+        q: query,
+        num: '10', // Google now limits to 10 results per page
+        start: start.toString(),
+        filter: '0',
+        uule: 'w+CAIQICIUQ2FsaWZvcm5pYSwgVW5pdGVkIFN0YXRlcw', // Location hint for better results
+        safe: 'off' // Disable safe search for more results
+      });
+
+      if (timeFilter && timeFilter !== 'anytime') {
+        const timeFilters = {
+          'day': 'qdr:d',
+          'week': 'qdr:w', 
+          'month': 'qdr:m',
+          'year': 'qdr:y',
+          'qdr:d': 'qdr:d',
+          'qdr:w': 'qdr:w',
+          'qdr:m': 'qdr:m',
+          'qdr:y': 'qdr:y'
+        };
+        
+        if (timeFilters[timeFilter]) {
+          params.append('tbs', timeFilters[timeFilter]);
+        }
+      }
+
+      const serpUrl = `https://serpapi.com/search?${params.toString()}`;
+      console.log(`🔗 [SERP PAGINATED] Page ${page + 1}/${maxPages}: ${serpUrl}`);
+      
+      try {
+        const response = await axios.get(serpUrl, {
+          timeout: 30000,
+          headers: {
+            'Accept': 'application/json',
+            'User-Agent': 'Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)'
+          }
+        });
+        
+        const organicResults = response.data.organic_results || [];
+        console.log(`📊 [SERP PAGINATED] Page ${page + 1}: Found ${organicResults.length} results`);
+        
+        // If no results on this page, we've reached the end
+        if (organicResults.length === 0) {
+          console.log(`🛑 [SERP PAGINATED] No more results after page ${page + 1}, stopping pagination`);
+          break;
+        }
+        
+        // Add results to our collection
+        allResults.push(...organicResults);
+        
+        // If we got less than 10 results, we've likely reached the end
+        if (organicResults.length < 10) {
+          console.log(`🛑 [SERP PAGINATED] Less than 10 results on page ${page + 1}, stopping pagination`);
+          break;
+        }
+        
+        // Small delay between requests to be respectful
+        if (page < maxPages - 1) {
+          await new Promise(resolve => setTimeout(resolve, 100));
+        }
+        
+      } catch (pageError) {
+        console.error(`❌ [SERP PAGINATED] Error on page ${page + 1}:`, pageError.message);
+        // Continue with next page instead of failing completely
+        continue;
       }
     }
 
-    // Make request to SERP API
-    const response = await axios.get(`https://serpapi.com/search?${params.toString()}`, {
-      timeout: 30000,
-      headers: {
-        'Accept': 'application/json',
-        'User-Agent': 'Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)'
+    console.log(`✅ [SERP PAGINATED] Collected ${allResults.length} total results from ${Math.ceil(allResults.length / 10)} pages`);
+    
+    // Return the combined results
+    const response = {
+      organic_results: allResults,
+      search_information: {
+        total_results: allResults.length,
+        query_displayed: query
       }
-    });
+    };
 
     auditLog('serp_search', req.user.userId, {
       ip: req.ip,
@@ -1368,7 +1422,7 @@ app.get('/api/usage/:provider', authenticateToken, async (req, res) => {
   }
 });
 
-// Simplified SERP Search - frontend sends query and timeFilter, backend builds URL
+// Simplified SERP Search with Pagination - gets up to 100 results via multiple API calls
 app.post('/api/proxy/serp-search-simple', authenticateToken, apiRateLimit, async (req, res) => {
   try {
     const { query, timeFilter } = req.body;
@@ -1388,50 +1442,89 @@ app.post('/api/proxy/serp-search-simple', authenticateToken, apiRateLimit, async
       return res.status(400).json({ error: 'SERP API key retrieval failed' });
     }
 
-    // Build SERP API URL with all parameters
-    const params = new URLSearchParams({
-      api_key: apiKey,
-      engine: 'google',
-      q: query,
-      num: '100',
-      start: '0',
-      filter: '0',
-      uule: 'w+CAIQICIUQ2FsaWZvcm5pYSwgVW5pdGVkIFN0YXRlcw', // Location hint for better results
-      safe: 'off' // Disable safe search for more results
-    });
+    console.log(`🔗 [SERP PAGINATED] Starting paginated search for: "${query}"`);
 
-    // Add time filter if specified
-    if (timeFilter && timeFilter !== 'anytime') {
-      const timeFilterMapping = {
-        'hour': 'qdr:h',
-        'day': 'qdr:d',
-        'week': 'qdr:w', 
-        'month': 'qdr:m',
-        'year': 'qdr:y',
-        'qdr:h': 'qdr:h',
-        'qdr:d': 'qdr:d',
-        'qdr:w': 'qdr:w',
-        'qdr:m': 'qdr:m',
-        'qdr:y': 'qdr:y'
-      };
+    // Make multiple API calls to get up to 100 results (10 pages × 10 results each)
+    const allResults = [];
+    const maxPages = 10; // 10 pages × 10 results = 100 total
+    
+    for (let page = 0; page < maxPages; page++) {
+      const start = page * 10; // Each page has 10 results
       
-      const tbsValue = timeFilterMapping[timeFilter] || timeFilter;
-      params.append('tbs', tbsValue);
-    }
+      // Build SERP API URL with pagination
+      const params = new URLSearchParams({
+        api_key: apiKey,
+        engine: 'google',
+        q: query,
+        num: '10', // Google now limits to 10 results per page
+        start: start.toString(),
+        filter: '0',
+        uule: 'w+CAIQICIUQ2FsaWZvcm5pYSwgVW5pdGVkIFN0YXRlcw', // Location hint for better results
+        safe: 'off' // Disable safe search for more results
+      });
 
-    const serpUrl = `https://serpapi.com/search?${params.toString()}`;
-    console.log(`🔗 [SERP SIMPLE] Making API call: ${serpUrl}`);
-    
-    const serpResponse = await axios.get(serpUrl, {
-      timeout: 30000,
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)'
+      // Add time filter if specified
+      if (timeFilter && timeFilter !== 'anytime') {
+        const timeFilterMapping = {
+          'hour': 'qdr:h',
+          'day': 'qdr:d',
+          'week': 'qdr:w', 
+          'month': 'qdr:m',
+          'year': 'qdr:y',
+          'qdr:h': 'qdr:h',
+          'qdr:d': 'qdr:d',
+          'qdr:w': 'qdr:w',
+          'qdr:m': 'qdr:m',
+          'qdr:y': 'qdr:y'
+        };
+        
+        const tbsValue = timeFilterMapping[timeFilter] || timeFilter;
+        params.append('tbs', tbsValue);
       }
-    });
+
+      const serpUrl = `https://serpapi.com/search?${params.toString()}`;
+      console.log(`🔗 [SERP PAGINATED] Page ${page + 1}/${maxPages}: ${serpUrl}`);
+      
+      try {
+        const serpResponse = await axios.get(serpUrl, {
+          timeout: 30000,
+          headers: {
+            'User-Agent': 'Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)'
+          }
+        });
+        
+        const organicResults = serpResponse.data.organic_results || [];
+        console.log(`📊 [SERP PAGINATED] Page ${page + 1}: Found ${organicResults.length} results`);
+        
+        // If no results on this page, we've reached the end
+        if (organicResults.length === 0) {
+          console.log(`🛑 [SERP PAGINATED] No more results after page ${page + 1}, stopping pagination`);
+          break;
+        }
+        
+        // Add results to our collection
+        allResults.push(...organicResults);
+        
+        // If we got less than 10 results, we've likely reached the end
+        if (organicResults.length < 10) {
+          console.log(`🛑 [SERP PAGINATED] Less than 10 results on page ${page + 1}, stopping pagination`);
+          break;
+        }
+        
+        // Small delay between requests to be respectful
+        if (page < maxPages - 1) {
+          await new Promise(resolve => setTimeout(resolve, 100));
+        }
+        
+      } catch (pageError) {
+        console.error(`❌ [SERP PAGINATED] Error on page ${page + 1}:`, pageError.message);
+        // Continue with next page instead of failing completely
+        continue;
+      }
+    }
     
-    // Process and return results
-    const organicResults = serpResponse.data.organic_results || [];
-    const processedResults = organicResults.map(result => ({
+    // Process and return all results
+    const processedResults = allResults.map((result, index) => ({
       title: result.title || '',
       company: result.source || 'Unknown',
       location: result.location || '',
@@ -1439,14 +1532,14 @@ app.post('/api/proxy/serp-search-simple', authenticateToken, apiRateLimit, async
       datePosted: result.date || '',
       description: result.snippet || '',
       source: 'SERP',
-      score: result.position || 0
+      score: index + 1 // Position in combined results
     }));
 
-    console.log(`✅ [SERP SIMPLE] Returning ${processedResults.length} processed results`);
+    console.log(`✅ [SERP PAGINATED] Returning ${processedResults.length} total processed results from ${Math.ceil(allResults.length / 10)} pages`);
     res.json(processedResults);
     
   } catch (error) {
-    console.error('SERP simple search error:', error.message);
+    console.error('SERP paginated search error:', error.message);
     res.status(500).json({ error: 'SERP search failed' });
   }
 });

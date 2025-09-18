@@ -195,6 +195,7 @@ app.use(cors({
     'http://localhost:8081',
     'http://localhost:5173',
     'https://jobsemble.tech',
+    'https://www.jobsemble.tech',
     'https://job-scout-automaton.lovable.app'
   ],
   methods: ['GET', 'POST', 'DELETE'],
